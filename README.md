@@ -5,7 +5,7 @@
 
 # Nzb Dav
 
-NzbDav is a WebDAV server that allows you to mount NZB documents and access your Usenet downloads as a standard file system. It's designed to integrate with other media management tools like Sonarr and Radarr, by providing a SABnzbd-compatible API. With it, you can build an infinite Plex or Jellyfin media library that streams directory from your usenet provider at maxed-out speeds, without using any storage space on your own server.
+NzbDav is a WebDAV server that allows you to mount and browse NZB documents as a virtual file system without downloading. It's designed to integrate with other media management tools, like Sonarr and Radarr, by providing a SABnzbd-compatible API. With it, you can build an infinite Plex or Jellyfin media library that streams directly from your usenet provider at maxed-out speeds, without using any storage space on your own server.
 
 Check the video below for a demo:
 
@@ -14,8 +14,8 @@ https://github.com/user-attachments/assets/d9f8caea-bb65-422e-831d-61d626d5b453
 
 # Key Features
 
-* 📁 **WebDAV Server** - *Provides a WebDAV endpoint for seamless integration.*
-* ☁️ **Mount NZB Documents** - *Mount and browse NZB documents as a virtual file system without downloading.*
+* 📁 **WebDAV Server** - *Host your virtual file system over HTTP(S)*
+* ☁️ **Mount NZB Documents** - *Mount and browse NZB documents without downloading.*
 * 📽️ **Full Streaming and Seeking Abilities** - *Jump ahead to any point in your video streams.*
 * 🗃️ **Automatic Unrar** - *View, stream, and seek content within RAR archives*
 * 🧩 **SABnzbd-Compatible API** - *Integrate with Sonarr/Radarr and other tools using a compatible API.*
@@ -75,7 +75,11 @@ This setup disables Rclone's caching and streams directly, since the  end-client
 --links
 ```
 
-The "--links" setting in RClone is important. It allows *.rclonelink files within the webdav to be translated to symlinks when mounted onto your filesystem.
+The `--links` setting in RClone is important. It allows *.rclonelink files within the webdav to be translated to symlinks when mounted onto your filesystem.
+
+> NOTE: Be sure to use an updated version of rclone that supports the `--links` argument.
+> * Version `v1.70.3` has been known to support it.
+> * Version `v1.60.1-DEV` has been known _not_ to support it.
 
 # Radarr / Sonarr
 
