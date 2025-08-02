@@ -95,7 +95,7 @@ public class RarProcessor(NzbFile nzbFile, UsenetStreamingClient usenet, Cancell
         foreach (var header in headerFactory.ReadHeaders(stream))
         {
             // we only care about file headers
-            if (header.HeaderType != HeaderType.File || header.GetFileName() == "QO") continue;
+            if (header.HeaderType != HeaderType.File || header.IsDirectory() || header.GetFileName() == "QO") continue;
 
             // we only support stored files (compression method m0).
             if (header.GetCompressionMethod() != 0)

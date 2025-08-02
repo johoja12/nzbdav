@@ -28,4 +28,9 @@ public static class RarHeaderExtensions
     {
         return (string)header.GetReflectionProperty("FileName")!;
     }
+
+    public static bool IsDirectory(this IRarHeader header)
+    {
+        return (bool)header.GetReflectionProperty("IsDirectory")!;
+    }
 }
