@@ -18,8 +18,8 @@ public class UsenetStreamingClient
     {
         // get connection settings from config-manager
         var host = configManager.GetConfigValue("usenet.host") ?? string.Empty;
-        var port = int.Parse(configManager.GetConfigValue("usenet.port") ?? "563");
-        var useSsl = bool.Parse(configManager.GetConfigValue("usenet.use_ssl") ?? "true");
+        var port = int.Parse(configManager.GetConfigValue("usenet.port") ?? "119");
+        var useSsl = bool.Parse(configManager.GetConfigValue("usenet.use-ssl") ?? "false");
         var user = configManager.GetConfigValue("usenet.user") ?? string.Empty;
         var pass = configManager.GetConfigValue("usenet.pass") ?? string.Empty;
         var connections = int.Parse(configManager.GetConfigValue("usenet.connections") ?? "10");
@@ -46,7 +46,7 @@ public class UsenetStreamingClient
             var connectionCount = int.Parse(configEventArgs.NewConfig["usenet.connections"]);
             var newHost = configEventArgs.NewConfig["usenet.host"];
             var newPort = int.Parse(configEventArgs.NewConfig["usenet.port"]);
-            var newUseSsl = bool.Parse(configEventArgs.NewConfig["usenet.use-ssl"]);
+            var newUseSsl = bool.Parse(configEventArgs.NewConfig.GetValueOrDefault("usenet.use-ssl", "false"));
             var newUser = configEventArgs.NewConfig["usenet.user"];
             var newPass = configEventArgs.NewConfig["usenet.pass"];
             multiConnectionClient.UpdateConnectionPool(new(connectionCount, cancellationToken =>
