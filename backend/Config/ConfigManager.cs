@@ -93,6 +93,13 @@ public class ConfigManager
         return null;
     }
 
+    public bool IsEnsureImportableVideoEnabled()
+    {
+        var defaultValue = true;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ensure-importable-video"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
     public class ConfigEventArgs : EventArgs
     {
         public Dictionary<string, string> ChangedConfig { get; set; } = new();

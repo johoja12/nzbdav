@@ -1,4 +1,5 @@
 ﻿using NzbWebDAV.Clients;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using Serilog;
@@ -12,10 +13,12 @@ public class QueueManager : IDisposable
     private readonly UsenetStreamingClient _usenetClient;
     private readonly CancellationTokenSource? _cancellationTokenSource;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly ConfigManager _configManager;
 
-    public QueueManager(UsenetStreamingClient usenetClient)
+    public QueueManager(UsenetStreamingClient usenetClient, ConfigManager configManager)
     {
         _usenetClient = usenetClient;
+        _configManager = configManager;
         _cancellationTokenSource = new CancellationTokenSource();
         _ = ProcessQueueAsync(_cancellationTokenSource.Token);
     }
@@ -89,7 +92,9 @@ public class QueueManager : IDisposable
     )
     {
         var progressHook = new Progress<int>();
-        var task = new QueueItemProcessor(queueItem, dbClient, _usenetClient, progressHook, cts.Token).ProcessAsync();
+        var task = new QueueItemProcessor(
+            queueItem, dbClient, _usenetClient, _configManager, progressHook, cts.Token
+        ).ProcessAsync();
         var inProgressQueueItem = new InProgressQueueItem()
         {
             QueueItem = queueItem,

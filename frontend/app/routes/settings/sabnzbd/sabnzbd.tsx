@@ -60,7 +60,20 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                     value={config["rclone.mount-dir"]}
                     onChange={e => setNewConfig({ ...config, "rclone.mount-dir": e.target.value })} />
                 <Form.Text id="mount-dir-help" muted>
-                    The location at which you've mounted (or will mount) the webdav root, through Rclone. This is used to tell sonarr / radarr where to look for completed "downloads."
+                    The location at which you've mounted (or will mount) the webdav root, through Rclone. This is used to tell Radarr / Sonarr where to look for completed "downloads."
+                </Form.Text>
+            </Form.Group>
+            <hr />
+            <Form.Group>
+                <Form.Check
+                    className={styles.input}
+                    type="checkbox"
+                    aria-describedby="ensure-importable-video-help"
+                    label={`Fail downloads for nzbs without video content`}
+                    checked={config["api.ensure-importable-video"] === "true"}
+                    onChange={e => setNewConfig({ ...config, "api.ensure-importable-video": "" + e.target.checked })} />
+                <Form.Text id="ensure-importable-video-help" muted>
+                    Whether to mark downloads as `failed` when no single video file is found inside the nzb. This will force Radarr / Sonarr to automatically look for a new nzb.
                 </Form.Text>
             </Form.Group>
         </div>
@@ -71,6 +84,7 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
     return config["api.key"] !== newConfig["api.key"]
         || config["api.categories"] !== newConfig["api.categories"]
         || config["rclone.mount-dir"] !== newConfig["rclone.mount-dir"]
+        || config["api.ensure-importable-video"] !== newConfig["api.ensure-importable-video"]
 }
 
 export function isSabnzbdSettingsValid(newConfig: Record<string, string>) {

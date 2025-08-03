@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
@@ -17,6 +18,7 @@ public class QueueItemProcessor(
     QueueItem queueItem,
     DavDatabaseClient dbClient,
     UsenetStreamingClient usenetClient,
+    ConfigManager configManager,
     IProgress<int> progress,
     CancellationToken ct
 )
@@ -104,7 +106,8 @@ public class QueueItemProcessor(
             new FileAggregator(dbClient, mountFolder).UpdateDatabase(fileProcessingResults);
 
             // validate video files found
-            new EnsureImportableVideoValidator(dbClient).ThrowIfValidationFails();
+            if (configManager.IsEnsureImportableVideoEnabled())
+                new EnsureImportableVideoValidator(dbClient).ThrowIfValidationFails();
         });
     }
 
