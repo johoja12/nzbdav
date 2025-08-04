@@ -75,13 +75,20 @@ This setup disables Rclone's caching and streams directly, since the  end-client
 --buffer-size=1024
 --dir-cache-time=1s
 --links
+--use-cookies
+--allow-other
 ```
 
-The `--links` setting in RClone is important. It allows *.rclonelink files within the webdav to be translated to symlinks when mounted onto your filesystem.
+* The `--links` setting in RClone is important. It allows *.rclonelink files within the webdav to be translated to symlinks when mounted onto your filesystem.
 
-> NOTE: Be sure to use an updated version of rclone that supports the `--links` argument.
-> * Version `v1.70.3` has been known to support it.
-> * Version `v1.60.1-DEV` has been known _not_ to support it.
+    > NOTE: Be sure to use an updated version of rclone that supports the `--links` argument.
+    > * Version `v1.70.3` has been known to support it.
+    > * Version `v1.60.1-DEV` has been known _not_ to support it.
+
+* The `--use-cookies` setting in RClone is also important. Without it, RClone is forced to re-authenticate on every single webdav request, slowing it down considerably.
+* The `--allow-other` setting is not required, but it should help if you find that your containers are not able to see the mount contents due to permission issues.
+
+
 
 # Radarr / Sonarr
 
