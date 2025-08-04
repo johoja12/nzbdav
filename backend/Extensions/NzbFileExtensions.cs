@@ -15,14 +15,16 @@ public static class NzbFileExtensions
 
     public static string GetSubjectFileName(this NzbFile file)
     {
-        return FirstNonEmpty(
+        return GetFirstValidNonEmptyFilename(
             () => TryParseFilename1(file),
-            () => TryParseFilename2(file)
+            () => TryParseFilename2(file),
+            () => TryParseFilename3(file)
         );
     }
 
     private static string TryParseFilename1(this NzbFile file)
     {
+        // example: `[1/8] - "file.mkv" yEnc 12345 (1/54321)`
         var match = Regex.Match(file.Subject, "\\\"(.*)\\\"");
         if (match.Success) return match.Groups[1].Value;
         return "";
@@ -30,6 +32,7 @@ public static class NzbFileExtensions
 
     private static string TryParseFilename2(this NzbFile file)
     {
+        // example: `Some release [file.mkv] [release]`
         var matches = Regex.Matches(file.Subject, @"\[([^\[\]]*)\]");
         return matches
             .Select(x => x.Groups[1].Value)
@@ -37,8 +40,18 @@ public static class NzbFileExtensions
             .FirstOrDefault(x => Path.GetExtension(x).Length < 6) ?? "";
     }
 
-    private static string FirstNonEmpty(params Func<string>[] funcs)
+    private static string TryParseFilename3(this NzbFile file)
     {
-        return funcs.Select(x => x.Invoke()).FirstOrDefault(x => x != "") ?? "";
+        // example: `file.mkv (1/0)`
+        var match = Regex.Match(file.Subject, @"^(.*?\.\w{2,6})\s+\(.*\)$");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private static string GetFirstValidNonEmptyFilename(params Func<string>[] funcs)
+    {
+        return funcs
+            .Select(x => x.Invoke())
+            .Where(x => x == Path.GetFileName(x))
+            .FirstOrDefault(x => x != "") ?? "";
     }
 }
