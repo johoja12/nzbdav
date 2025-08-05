@@ -18,7 +18,8 @@ public static class NzbFileExtensions
         return GetFirstValidNonEmptyFilename(
             () => TryParseFilename1(file),
             () => TryParseFilename2(file),
-            () => TryParseFilename3(file)
+            () => TryParseFilename3(file),
+            () => TryParseFilename4(file)
         );
     }
 
@@ -45,6 +46,13 @@ public static class NzbFileExtensions
         // example: `file.mkv (1/0)`
         var match = Regex.Match(file.Subject, @"^(.*?\.\w{2,6})\s+\(.*\)$");
         return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private static string TryParseFilename4(this NzbFile file)
+    {
+        // example: `file.mkv` — no spaces allowed
+        var match = Regex.Match(file.Subject, @"^[^\s]+\.\w{2,6}$");
+        return match.Success ? match.Value : "";
     }
 
     private static string GetFirstValidNonEmptyFilename(params Func<string>[] funcs)
