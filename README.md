@@ -20,6 +20,11 @@ https://github.com/user-attachments/assets/d9f8caea-bb65-422e-831d-61d626d5b453
 * 🗃️ **Automatic Unrar** - *View, stream, and seek content within RAR archives*
 * 🧩 **SABnzbd-Compatible API** - *Integrate with Sonarr/Radarr and other tools using a compatible API.*
 
+# Road Map
+* 🟫 **Improved Queue/History UI** - *Real-time queue with download progress. And support for manual queue/history actions (e.g. removals)*
+* 🟫 **Automatic Repairs of Broken Nzbs** - *Periodic checks of Nzb health, triggering automatic \*arr replacements when necessary*
+* 🟫 **Multiple/Backup Usenet Providers** - *Fallback to other usenet providers in cases of missing articles*
+* 🟫 **7z Support** - *Support streaming from uncompressed 7z archives*
 
 # Getting Started
 
