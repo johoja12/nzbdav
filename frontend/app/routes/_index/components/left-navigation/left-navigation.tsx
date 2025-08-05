@@ -23,7 +23,9 @@ export function LeftNavigation(props: LefNavigationProps) {
 
             <div className={styles.footer}>
                 <div className={styles["footer-item"]}>
-                    <div>github</div>
+                    <Link to="https://github.com/nzbdav-dev/nzbdav" className={styles["github-link"]}>
+                        github
+                    </Link>
                     <div className={styles["github-icon"]} />
                 </div>
                 <div className={styles["footer-item"]}>

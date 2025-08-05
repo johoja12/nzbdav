@@ -3,6 +3,7 @@ declare const styles: {
   readonly "explore-icon": string;
   readonly "footer": string;
   readonly "footer-item": string;
+  readonly "github-link": string;
   readonly "github-icon": string;
   readonly "item": string;
   readonly "logout-icon": string;
