@@ -5,6 +5,8 @@ import {
   redirect,
   Scripts,
   ScrollRestoration,
+  useLocation,
+  useNavigation,
 } from "react-router";
 
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -14,6 +16,7 @@ import { sessionStorage } from "~/auth/authentication.server";
 import { TopNavigation } from "./routes/_index/components/top-navigation/top-navigation";
 import { LeftNavigation } from "./routes/_index/components/left-navigation/left-navigation";
 import { PageLayout } from "./routes/_index/components/page-layout/page-layout";
+import { Loading } from "./routes/_index/components/loading/loading";
 
 export async function loader({ request }: Route.LoaderArgs) {
   // unauthenticated routes
@@ -50,12 +53,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 export default function App({ loaderData }: Route.ComponentProps) {
   const { useLayout } = loaderData;
+  const location = useLocation();
+  const navigation = useNavigation();
+  const isNavigating = Boolean(navigation.location);
+
+  // display loading animiation during top-level page transitions,
+  // but allow the `/explore` page to handle it's own loading screen.
+  const isCurrentExplorePage = location.pathname.startsWith("/explore");
+  const isNextExplorePage = navigation.location?.pathname?.startsWith("/explore");
+  const showLoading = isNavigating && !(isCurrentExplorePage && isNextExplorePage);
 
   if (useLayout) {
     return (
       <PageLayout
         topNavComponent={TopNavigation}
-        bodyChild={<Outlet />}
+        bodyChild={showLoading ? <Loading /> : <Outlet />}
         leftNavChild={<LeftNavigation />} />
     );
   }
