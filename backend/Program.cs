@@ -86,7 +86,7 @@ class Program
         // run
         var app = builder.Build();
         app.UseSerilogRequestLogging();
-        app.UseMiddleware<RequestCancelledMiddleware>();
+        app.UseMiddleware<ExceptionMiddleware>();
         app.UseAuthentication();
         app.MapControllers();
         app.UseNWebDav();

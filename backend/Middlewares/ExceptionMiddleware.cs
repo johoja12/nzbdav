@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NzbWebDAV.Exceptions;
+using Serilog;
 
 namespace NzbWebDAV.Middlewares;
 
-public class RequestCancelledMiddleware(RequestDelegate next)
+public class ExceptionMiddleware(RequestDelegate next)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -19,6 +21,16 @@ public class RequestCancelledMiddleware(RequestDelegate next)
                 context.Response.StatusCode = 499; // Non-standard status code for client closed request
                 await context.Response.WriteAsync("Client closed request.");
             }
+        }
+        catch (UsenetArticleNotFoundException e)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+            }
+
+            Log.Warning($"File `{context.Request.Path}` has missing articles: {e.Message}");
         }
     }
 }
