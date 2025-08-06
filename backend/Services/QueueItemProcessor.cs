@@ -86,10 +86,16 @@ public class QueueItemProcessor(
         using var stream = new MemoryStream(documentBytes);
         var nzb = await NzbDocument.LoadAsync(stream);
 
-        // start the file processing tasks
+        // parse filenames for each nzb file
+        var filenamesTaskDictionary = nzb.Files.ToDictionary(x => x, x => x.GetFileName(usenetClient));
+        var filenamesDictionary = new Dictionary<NzbFile, string>();
+        foreach (var filenameTask in filenamesTaskDictionary)
+            filenamesDictionary[filenameTask.Key] = await filenameTask.Value;
+
+        // start file processing tasks
         var fileProcessingTasks = nzb.Files
-            .DistinctBy(x => x.GetSubjectFileName())
-            .Select(GetFileProcessor)
+            .DistinctBy(x => filenamesDictionary[x])
+            .Select(x => GetFileProcessor(x, filenamesDictionary[x]))
             .Where(x => x is not null)
             .Select(x => x!.ProcessAsync())
             .ToList();
@@ -111,10 +117,10 @@ public class QueueItemProcessor(
         });
     }
 
-    private BaseProcessor? GetFileProcessor(NzbFile nzbFile)
+    private BaseProcessor? GetFileProcessor(NzbFile nzbFile, string filename)
     {
-        return RarProcessor.CanProcess(nzbFile) ? new RarProcessor(nzbFile, usenetClient, ct)
-            : FileProcessor.CanProcess(nzbFile) ? new FileProcessor(nzbFile, usenetClient, ct)
+        return RarProcessor.CanProcess(filename) ? new RarProcessor(nzbFile, filename, usenetClient, ct)
+            : FileProcessor.CanProcess(filename) ? new FileProcessor(nzbFile, filename, usenetClient, ct)
             : null;
     }
 
