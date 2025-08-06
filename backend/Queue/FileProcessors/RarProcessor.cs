@@ -7,9 +7,8 @@ using SharpCompress.Common.Rar.Headers;
 using SharpCompress.IO;
 using SharpCompress.Readers;
 using Usenet.Nzb;
-using Usenet.Yenc;
 
-namespace NzbWebDAV.Services.FileProcessors;
+namespace NzbWebDAV.Queue.FileProcessors;
 
 public class RarProcessor(
     NzbFile nzbFile,

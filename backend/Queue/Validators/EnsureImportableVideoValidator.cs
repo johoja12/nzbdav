@@ -3,7 +3,7 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Exceptions;
 
-namespace NzbWebDAV.Services.Validators;
+namespace NzbWebDAV.Queue.Validators;
 
 public class EnsureImportableVideoValidator(DavDatabaseClient dbClient)
 {

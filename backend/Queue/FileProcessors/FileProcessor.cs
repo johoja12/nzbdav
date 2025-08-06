@@ -1,8 +1,7 @@
 ﻿using NzbWebDAV.Clients;
-using NzbWebDAV.Extensions;
 using Usenet.Nzb;
 
-namespace NzbWebDAV.Services.FileProcessors;
+namespace NzbWebDAV.Queue.FileProcessors;
 
 public class FileProcessor(NzbFile nzbFile, string filename, UsenetStreamingClient usenet, CancellationToken ct) : BaseProcessor
 {

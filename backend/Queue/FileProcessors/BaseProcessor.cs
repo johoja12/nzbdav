@@ -1,4 +1,4 @@
-﻿namespace NzbWebDAV.Services.FileProcessors;
+﻿namespace NzbWebDAV.Queue.FileProcessors;
 
 public abstract class BaseProcessor
 {

@@ -11,7 +11,7 @@ using NzbWebDAV.Api.SabControllers.RemoveFromQueue;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
-using NzbWebDAV.Services;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.SabControllers;

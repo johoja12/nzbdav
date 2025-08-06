@@ -12,7 +12,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Middlewares;
-using NzbWebDAV.Services;
+using NzbWebDAV.Queue;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.WebDav.Base;

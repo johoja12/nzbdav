@@ -5,14 +5,14 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
-using NzbWebDAV.Services.FileAggregators;
-using NzbWebDAV.Services.FileProcessors;
-using NzbWebDAV.Services.Validators;
+using NzbWebDAV.Queue.FileAggregators;
+using NzbWebDAV.Queue.FileProcessors;
+using NzbWebDAV.Queue.Validators;
 using NzbWebDAV.Utils;
 using Serilog;
 using Usenet.Nzb;
 
-namespace NzbWebDAV.Services;
+namespace NzbWebDAV.Queue;
 
 public class QueueItemProcessor(
     QueueItem queueItem,
