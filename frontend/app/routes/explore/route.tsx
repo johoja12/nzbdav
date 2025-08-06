@@ -1,7 +1,4 @@
 import type { Route } from "./+types/route";
-import { Layout } from "../_index/components/layout/layout";
-import { TopNavigation } from "../_index/components/top-navigation/top-navigation";
-import { LeftNavigation } from "../_index/components/left-navigation/left-navigation";
 import { Breadcrumbs } from "./breadcrumbs/breadcrumbs";
 import styles from "./route.module.css"
 import { Link, redirect, useLocation, useNavigate } from "react-router";
@@ -48,11 +45,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 export default function Explore({ loaderData }: Route.ComponentProps) {
     return (
-        <Layout
-            topNavComponent={TopNavigation}
-            bodyChild={<Body {...loaderData} />}
-            leftNavChild={<LeftNavigation />}
-        />
+        <Body {...loaderData} />
     );
 }
 
