@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Http;
+using NWebDav.Server.Helpers;
 using NzbWebDAV.Exceptions;
 using Serilog;
 
@@ -31,6 +32,17 @@ public class ExceptionMiddleware(RequestDelegate next)
             }
 
             Log.Warning($"File `{context.Request.Path}` has missing articles: {e.Message}");
+        }
+        catch (SeekPositionNotFoundException)
+        {
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 404;
+            }
+
+            var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "unknown";
+            Log.Warning($"File `{context.Request.Path}` could not seek to byte position: {seekPosition}");
         }
     }
 }

@@ -1,4 +1,6 @@
-﻿namespace NzbWebDAV.Utils;
+﻿using NzbWebDAV.Exceptions;
+
+namespace NzbWebDAV.Utils;
 
 public static class InterpolationSearch
 {
@@ -17,7 +19,7 @@ public static class InterpolationSearch
 
             // make sure our search is even possible.
             if (!byteRangeToSearch.Contains(searchByte) || indexRangeToSearch.Count <= 0)
-                throw new Exception($"Corrupt file. Cannot find byte position {searchByte}.");
+                throw new SeekPositionNotFoundException($"Corrupt file. Cannot find byte position {searchByte}.");
 
             // make a guess
             var searchByteFromStart = searchByte - byteRangeToSearch.StartInclusive;
@@ -28,7 +30,7 @@ public static class InterpolationSearch
 
             // make sure the result is within the range of our search space
             if (!byteRangeOfGuessedIndex.IsContainedWithin(byteRangeToSearch))
-                throw new Exception($"Corrupt file. Cannot find byte position {searchByte}.");
+                throw new SeekPositionNotFoundException($"Corrupt file. Cannot find byte position {searchByte}.");
 
             // if we guessed too low, adjust our lower bounds in order to search higher next time
             if (byteRangeOfGuessedIndex.EndExclusive <= searchByte)
