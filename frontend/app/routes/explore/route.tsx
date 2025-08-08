@@ -1,7 +1,7 @@
 import type { Route } from "./+types/route";
 import { Breadcrumbs } from "./breadcrumbs/breadcrumbs";
 import styles from "./route.module.css"
-import { Link, useLocation, useNavigation } from "react-router";
+import { Link, redirect, useLocation, useNavigation } from "react-router";
 import { backendClient, type DirectoryItem } from "~/clients/backend-client.server";
 import { useCallback } from "react";
 import { lookup as getMimeType } from 'mime-types';
@@ -20,8 +20,11 @@ export type ExploreFile = DirectoryItem & {
 
 
 export async function loader({ request }: Route.LoaderArgs) {
-    let path = getWebdavPath(new URL(request.url).pathname);
+    // if path ends in trailing slash, remove it
+    if (request.url.endsWith('/')) return redirect(request.url.slice(0, -1));
 
+    // load items from backend
+    let path = getWebdavPath(new URL(request.url).pathname);
     return {
         parentDirectories: getParentDirectories(path),
         items: (await backendClient.listWebdavDirectory(path)).map(x => {
@@ -56,10 +59,7 @@ function Body(props: ExplorePageData) {
     }, [location.pathname]);
 
     const getFilePath = useCallback((file: ExploreFile) => {
-        var pathname = location.pathname;
-        if (pathname.startsWith("/")) pathname = pathname.slice(1);
-        if (pathname.startsWith("explore")) pathname = pathname.slice(7);
-        if (pathname.startsWith("/")) pathname = pathname.slice(1);
+        var pathname = getWebdavPath(location.pathname);
         return `/view/${pathname}/${file.name}?downloadKey=${file.downloadKey}`;
     }, [location.pathname]);
 
