@@ -51,6 +51,7 @@ class Program
         var builder = WebApplication.CreateBuilder(args);
         builder.Host.UseSerilog();
         builder.Services.AddControllers();
+        builder.Services.AddHealthChecks();
         builder.Services
             .AddSingleton(configManager)
             .AddSingleton<UsenetStreamingClient>()
@@ -85,6 +86,7 @@ class Program
 
         // run
         var app = builder.Build();
+        app.MapHealthChecks("/health");
         app.UseSerilogRequestLogging();
         app.UseMiddleware<ExceptionMiddleware>();
         app.UseAuthentication();
