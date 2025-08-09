@@ -44,5 +44,10 @@
     "typescript": "^5.8.3",
     "vite": "^6.3.3",
     "vite-tsconfig-paths": "^5.1.4"
+  },
+  "overrides": {
+    "http-proxy-middleware": {
+      "http-proxy": "npm:http-proxy-node16@^1.0.6"
+    }
   }
 }
