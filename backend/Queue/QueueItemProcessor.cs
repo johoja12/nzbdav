@@ -101,7 +101,10 @@ public class QueueItemProcessor(
             .ToList();
 
         // wait for all file processing tasks to finish
-        var fileProcessingResults = await TaskUtil.WhenAllOrError(fileProcessingTasks, progress);
+        var fileProcessingResults = (await TaskUtil.WhenAllOrError(fileProcessingTasks, progress))
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .ToList();
 
         // update the database
         await MarkQueueItemCompleted(startTime, error: null, () =>

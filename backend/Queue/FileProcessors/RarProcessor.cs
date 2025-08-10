@@ -22,7 +22,7 @@ public class RarProcessor(
         return IsRarFile(filename);
     }
 
-    public override async Task<BaseProcessor.Result> ProcessAsync()
+    public override async Task<BaseProcessor.Result?> ProcessAsync()
     {
         try
         {
