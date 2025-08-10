@@ -95,6 +95,7 @@ function getIcon(file: ExploreFile) {
 }
 
 function getWebdavPath(pathname: string): string {
+    pathname = decodeURIComponent(pathname);
     if (pathname.startsWith("/")) pathname = pathname.slice(1);
     if (pathname.startsWith("explore")) pathname = pathname.slice(7);
     if (pathname.startsWith("/")) pathname = pathname.slice(1);
