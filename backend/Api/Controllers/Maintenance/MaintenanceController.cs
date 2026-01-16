@@ -197,7 +197,7 @@ public class MaintenanceController(
 
     private static string GetStrmFilePath(DavItem davItem, string targetDirectory)
     {
-        var path = davItem.Path + ".strm";
+        var path = Path.ChangeExtension(davItem.Path, ".strm");
         var parts = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return Path.Join(targetDirectory, Path.Join(parts[2..]));
     }
