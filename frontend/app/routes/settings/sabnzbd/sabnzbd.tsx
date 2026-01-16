@@ -185,6 +185,51 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                     </Form.Text>
                 </Form.Group>
             }
+            {config["api.import-strategy"] === 'symlinks' &&
+                <Form.Group className={styles.subGroup}>
+                    <Form.Check
+                        type="switch"
+                        id="also-create-strm-switch"
+                        label="Also create STRM files for Emby/Jellyfin"
+                        checked={config["api.also-create-strm"] === "true"}
+                        onChange={e => setNewConfig({ ...config, "api.also-create-strm": e.target.checked ? "true" : "false" })} />
+                    <Form.Text muted>
+                        When enabled, STRM files will also be created alongside symlinks, allowing Emby/Jellyfin to stream content while Plex uses the rclone mount.
+                    </Form.Text>
+                </Form.Group>
+            }
+            {config["api.import-strategy"] === 'symlinks' && config["api.also-create-strm"] === "true" &&
+                <Form.Group className={styles.subGroup}>
+                    <Form.Label htmlFor="strm-library-dir-input">STRM Library Directory</Form.Label>
+                    <Form.Control
+                        className={styles.input}
+                        type="text"
+                        id="strm-library-dir-input"
+                        aria-describedby="strm-library-dir-help"
+                        placeholder="/data/strm-library"
+                        value={config["api.strm-library-dir"]}
+                        onChange={e => setNewConfig({ ...config, "api.strm-library-dir": e.target.value })} />
+                    <Form.Text id="strm-library-dir-help" muted>
+                        Directory where STRM files will be created for Emby/Jellyfin. Point your Emby library to this folder.
+                    </Form.Text>
+                </Form.Group>
+            }
+            {config["api.import-strategy"] === 'symlinks' && config["api.also-create-strm"] === "true" &&
+                <Form.Group className={styles.subGroup}>
+                    <Form.Label htmlFor="strm-base-url-input">STRM Base URL</Form.Label>
+                    <Form.Control
+                        className={styles.input}
+                        type="text"
+                        id="strm-base-url-input"
+                        aria-describedby="strm-base-url-help"
+                        placeholder="http://192.168.55.175:3000"
+                        value={config["general.base-url"]}
+                        onChange={e => setNewConfig({ ...config, "general.base-url": e.target.value })} />
+                    <Form.Text id="strm-base-url-help" muted>
+                        The URL that Emby/Jellyfin will use to stream content. STRM files will contain URLs pointing to this address.
+                    </Form.Text>
+                </Form.Group>
+            }
             {config["api.import-strategy"] === 'strm' && <>
                 <Form.Group  className={styles.subGroup}>
                     <Form.Label htmlFor="completed-downloads-dir-input">Completed Downloads Dir</Form.Label>
@@ -444,6 +489,8 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
         || config["sab.servers"] !== newConfig["sab.servers"]
         || config["sab.url"] !== newConfig["sab.url"]
         || config["sab.api-key"] !== newConfig["sab.api-key"]
+        || config["api.also-create-strm"] !== newConfig["api.also-create-strm"]
+        || config["api.strm-library-dir"] !== newConfig["api.strm-library-dir"]
 }
 
 export function isSabnzbdSettingsValid(newConfig: Record<string, string>) {
