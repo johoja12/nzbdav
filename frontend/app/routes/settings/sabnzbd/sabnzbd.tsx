@@ -108,7 +108,7 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
     const onPopulateStrmLibrary = useCallback(async () => {
         setPopulateStatus({ loading: true });
         try {
-            const response = await fetch("/api/maintenance/populate-strm", { method: "POST" });
+            const response = await fetch("/settings/maintenance/populate-strm", { method: "POST" });
             const data = await response.json() as { message?: string; created?: number; skipped?: number; total?: number; error?: string };
             if (!response.ok) {
                 throw new Error(data.error || "Failed to populate STRM library");
