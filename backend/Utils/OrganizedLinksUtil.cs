@@ -373,8 +373,22 @@ public static class OrganizedLinksUtil
             Log.Warning("[OrganizedLinksUtil] Library directory is not configured. Skipping filesystem sync.");
             return Enumerable.Empty<DavItemLink>();
         }
+
         var allSymlinksAndStrms = SymlinkAndStrmUtil.GetAllSymlinksAndStrms(libraryRoot);
-        return GetDavItemLinks(allSymlinksAndStrms, configManager);
+        var allLinks = GetDavItemLinks(allSymlinksAndStrms, configManager);
+
+        // When dual STRM mode is enabled, exclude STRM files from strm-library-dir
+        // so that symlinks are used for Arr operations (Sonarr/Radarr only know about symlinks)
+        if (configManager.GetAlsoCreateStrm())
+        {
+            var strmLibraryDir = configManager.GetStrmLibraryDir();
+            if (!string.IsNullOrEmpty(strmLibraryDir))
+            {
+                allLinks = allLinks.Where(x => !x.LinkPath.StartsWith(strmLibraryDir));
+            }
+        }
+
+        return allLinks;
     }
 
     private static bool Verify(string linkFromCache, DavItem targetDavItem, ConfigManager configManager)
