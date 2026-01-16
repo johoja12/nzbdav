@@ -433,6 +433,16 @@ public class ConfigManager
         return GetConfigValue("general.base-url") ?? "http://localhost:3000";
     }
 
+    public bool GetAlsoCreateStrm()
+    {
+        return GetConfigValue("api.also-create-strm") == "true";
+    }
+
+    public string GetStrmLibraryDir()
+    {
+        return GetConfigValue("api.strm-library-dir") ?? "/data/strm-library";
+    }
+
     public StreamingMonitorConfig GetStreamingMonitorConfig()
     {
         return new StreamingMonitorConfig

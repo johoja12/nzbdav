@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
@@ -10,9 +10,20 @@ namespace NzbWebDAV.Queue.PostProcessors;
 
 public class CreateStrmFilesPostProcessor(ConfigManager configManager, DavDatabaseClient dbClient)
 {
+    /// <summary>
+    /// Create strm files using the default completed downloads directory (for Arr import)
+    /// </summary>
     public async Task CreateStrmFilesAsync()
     {
-        // Add strm files to the download dir
+        await CreateStrmFilesAsync(configManager.GetStrmCompletedDownloadDir()).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Create strm files in a specific target directory (for dual output to Emby library)
+    /// </summary>
+    public async Task CreateStrmFilesAsync(string targetDirectory)
+    {
+        // Add strm files to the target directory
         var videoItems = dbClient.Ctx.ChangeTracker.Entries<DavItem>()
             .Where(x => x.State == EntityState.Added)
             .Select(x => x.Entity)
@@ -20,15 +31,19 @@ public class CreateStrmFilesPostProcessor(ConfigManager configManager, DavDataba
             .Where(x => FilenameUtil.IsVideoFile(x.Name));
         foreach (var videoItem in videoItems)
         {
-            await CreateStrmFileAsync(videoItem).ConfigureAwait(false);
-            OrganizedLinksUtil.UpdateCacheEntry(videoItem.Id, GetStrmFilePath(videoItem));
+            await CreateStrmFileAsync(videoItem, targetDirectory).ConfigureAwait(false);
+            // Only update cache for default strm path (Arr imports)
+            if (targetDirectory == configManager.GetStrmCompletedDownloadDir())
+            {
+                OrganizedLinksUtil.UpdateCacheEntry(videoItem.Id, GetStrmFilePath(videoItem, targetDirectory));
+            }
         }
     }
 
-    private async Task CreateStrmFileAsync(DavItem davItem)
+    private async Task CreateStrmFileAsync(DavItem davItem, string targetDirectory)
     {
         // create necessary directories if they don't already exist
-        var strmFilePath = GetStrmFilePath(davItem);
+        var strmFilePath = GetStrmFilePath(davItem, targetDirectory);
         var directoryName = Path.GetDirectoryName(strmFilePath);
         if (directoryName != null)
             await Task.Run(() => Directory.CreateDirectory(directoryName)).ConfigureAwait(false);
@@ -38,11 +53,11 @@ public class CreateStrmFilesPostProcessor(ConfigManager configManager, DavDataba
         await File.WriteAllTextAsync(strmFilePath, targetUrl).ConfigureAwait(false);
     }
 
-    private string GetStrmFilePath(DavItem davItem)
+    private string GetStrmFilePath(DavItem davItem, string targetDirectory)
     {
         var path = davItem.Path + ".strm";
         var parts = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return Path.Join(configManager.GetStrmCompletedDownloadDir(), Path.Join(parts[2..]));
+        return Path.Join(targetDirectory, Path.Join(parts[2..]));
     }
 
     private string GetStrmTargetUrl(DavItem davItem)

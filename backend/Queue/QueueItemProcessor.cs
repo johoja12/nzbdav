@@ -338,6 +338,13 @@ public class QueueItemProcessor(
                     await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync().ConfigureAwait(false);
                 }
 
+                // Also create strm files for Emby library (dual output)
+                if (configManager.GetAlsoCreateStrm())
+                {
+                    Log.Debug("[QueueItemProcessor] Step 4e2: Creating STRM files for Emby library for {JobName}...", queueItem.JobName);
+                    await new CreateStrmFilesPostProcessor(configManager, dbClient).CreateStrmFilesAsync(configManager.GetStrmLibraryDir()).ConfigureAwait(false);
+                }
+
                 Log.Debug("[QueueItemProcessor] Step 4f: All database operations complete for {JobName}", queueItem.JobName);
                 return mountFolder;
             }).ConfigureAwait(false);
