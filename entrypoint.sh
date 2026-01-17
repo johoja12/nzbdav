@@ -73,7 +73,17 @@ chown $PUID:$PGID /config
 
 cd /app/backend
 
+# Start frontend FIRST so startup page is available immediately
+echo "Starting frontend (startup page will be available while backend initializes)..."
+cd /app/frontend
+su-exec appuser npm run start &
+FRONTEND_PID=$!
+
+# Give frontend a moment to bind to port
+sleep 2
+
 # Run database migration with PRAGMA optimizations (5-10x faster)
+cd /app/backend
 echo "Starting database migration..."
 su-exec appuser ./NzbWebDAV --db-migration
 echo "Database migration completed."
@@ -81,34 +91,6 @@ echo "Database migration completed."
 # Run backend as appuser in background
 su-exec appuser ./NzbWebDAV &
 BACKEND_PID=$!
-
-# Wait for backend health check
-echo "Waiting for backend to start."
-MAX_BACKEND_HEALTH_RETRIES=${MAX_BACKEND_HEALTH_RETRIES:-300}
-MAX_BACKEND_HEALTH_RETRY_DELAY=${MAX_BACKEND_HEALTH_RETRY_DELAY:-1}
-i=0
-while true; do
-    echo "Checking backend health: $BACKEND_URL/health ..."
-    if curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/health" | grep -q "^200$"; then
-        echo "Backend is healthy."
-        break
-    fi
-
-    i=$((i+1))
-    if [ "$i" -ge "$MAX_BACKEND_HEALTH_RETRIES" ]; then
-        echo "Backend failed health check after $MAX_BACKEND_HEALTH_RETRIES retries. Exiting."
-        kill $BACKEND_PID
-        wait $BACKEND_PID
-        exit 1
-    fi
-
-    sleep "$MAX_BACKEND_HEALTH_RETRY_DELAY"
-done
-
-# Run frontend as appuser in background
-cd /app/frontend
-su-exec appuser npm run start &
-FRONTEND_PID=$!
 
 # Wait for either to exit
 wait_either $BACKEND_PID $FRONTEND_PID
