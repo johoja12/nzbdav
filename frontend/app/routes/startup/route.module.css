@@ -1,0 +1,107 @@
+.container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 40px;
+}
+
+.logo {
+    height: 4em;
+}
+
+.title {
+    font-size: 2.5em;
+    font-style: normal;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 8px;
+}
+
+.statusSection {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1em;
+    padding: 8px 16px;
+    border-radius: 6px;
+    background-color: var(--bs-dark);
+}
+
+.statusConnecting {
+    color: var(--bs-info);
+}
+
+.statusReady {
+    color: var(--bs-success);
+}
+
+.statusError {
+    color: var(--bs-warning);
+}
+
+.errorDetail {
+    font-size: 0.8em;
+    color: var(--bs-secondary);
+    max-width: 280px;
+    text-align: center;
+    word-break: break-word;
+}
+
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.buildInfo {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px;
+    background-color: var(--bs-dark);
+    border-radius: 6px;
+    font-size: 0.85em;
+}
+
+.buildRow {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.buildLabel {
+    color: var(--bs-secondary);
+    flex-shrink: 0;
+}
+
+.buildValue {
+    color: var(--bs-light);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

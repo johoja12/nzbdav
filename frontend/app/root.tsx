@@ -29,30 +29,38 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // unauthenticated routes
+  // unauthenticated routes that don't need backend
   let path = new URL(request.url).pathname;
+  if (path === "/startup") return { useLayout: false };
   if (path === "/login") return { useLayout: false };
   if (path === "/onboarding") return { useLayout: false };
 
-  // ensure all other routes are authenticated
-  if (!await isAuthenticated(request)) return redirect("/login");
+  // Try to connect to backend - redirect to startup page if unavailable
+  try {
+    // ensure all other routes are authenticated
+    if (!await isAuthenticated(request)) return redirect("/login");
 
-  var config = await backendClient.getConfig(["stats.enable"]);
-  var statsEnabled = config.find(x => x.configName === "stats.enable")?.configValue !== "false";
+    var config = await backendClient.getConfig(["stats.enable"]);
+    var statsEnabled = config.find(x => x.configName === "stats.enable")?.configValue !== "false";
 
-  return {
-    useLayout: true,
-    version: process.env.NZBDAV_VERSION,
-    buildDate: process.env.NZBDAV_BUILD_DATE,
-    gitBranch: process.env.NZBDAV_GIT_BRANCH,
-    gitCommit: process.env.NZBDAV_GIT_COMMIT,
-    gitRemote: process.env.NZBDAV_GIT_REMOTE,
-    gitUpstream: process.env.NZBDAV_GIT_UPSTREAM,
-    upstreamDate: process.env.NZBDAV_UPSTREAM_DATE,
-    originalDate: process.env.NZBDAV_ORIGINAL_DATE,
-    isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
-    statsEnabled: statsEnabled
-  };
+    return {
+      useLayout: true,
+      version: process.env.NZBDAV_VERSION,
+      buildDate: process.env.NZBDAV_BUILD_DATE,
+      gitBranch: process.env.NZBDAV_GIT_BRANCH,
+      gitCommit: process.env.NZBDAV_GIT_COMMIT,
+      gitRemote: process.env.NZBDAV_GIT_REMOTE,
+      gitUpstream: process.env.NZBDAV_GIT_UPSTREAM,
+      upstreamDate: process.env.NZBDAV_UPSTREAM_DATE,
+      originalDate: process.env.NZBDAV_ORIGINAL_DATE,
+      isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
+      statsEnabled: statsEnabled
+    };
+  } catch (error) {
+    // Backend is not available - redirect to startup page
+    console.error("Backend unavailable, redirecting to startup page:", error);
+    return redirect("/startup");
+  }
 }
 
 
