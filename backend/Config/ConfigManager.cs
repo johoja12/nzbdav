@@ -452,6 +452,15 @@ public class ConfigManager
         };
     }
 
+    public EmbyConfig GetEmbyConfig()
+    {
+        return new EmbyConfig
+        {
+            VerifyPlayback = GetConfigValue("emby.verify-playback") != "false",
+            Servers = GetConfigValue<List<EmbyServer>>("emby.servers") ?? new List<EmbyServer>()
+        };
+    }
+
     public SabPauseConfig GetSabPauseConfig()
     {
         return new SabPauseConfig
@@ -518,6 +527,16 @@ public class ConfigManager
             .Replace("/", "")
             .ToLowerInvariant();
         return $"arr.path-mappings.{normalized}";
+    }
+
+    /// <summary>
+    /// Get poll interval for Plex/Emby server health checks (seconds).
+    /// Default: 5 seconds
+    /// </summary>
+    public int GetServerPollIntervalSeconds()
+    {
+        return int.TryParse(GetConfigValue("server-sync.poll-interval"), out var interval)
+            ? interval : 5;
     }
 
     public class ConfigEventArgs : EventArgs

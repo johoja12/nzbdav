@@ -305,29 +305,41 @@ public class NzbFileStream : Stream
             }
             fileName ??= _usageContext.DetailsObject?.JobName ?? _usageContext.Details;
 
-            // Determine connection usage type based on Plex session state:
-            // - PlexPlayback: This file is in an active Plex session (real playback)
-            // - PlexBackground: Plex has active sessions, but this file isn't in them (background activity)
-            // - BufferedStreaming: No Plex sessions at all (direct WebDAV access, not Plex-related)
-            var plexService = PlexVerificationService.Instance;
+            // Determine playback status from media servers
+            var plexPlaying = PlexVerificationService.Instance?.IsFilePlaying(fileName);
+            var embyPlaying = EmbyVerificationService.Instance?.IsFilePlaying(fileName);
+
+            // Classify connection usage type
             ConnectionUsageType usageType;
-            if (plexService == null)
+            if (plexPlaying == true)
             {
-                usageType = ConnectionUsageType.BufferedStreaming;
-            }
-            else if (plexService.IsFilePlaying(fileName))
-            {
+                // Verified Plex playback - highest priority for fastest provider
                 usageType = ConnectionUsageType.PlexPlayback;
             }
-            else if (plexService.IsFileInBackgroundActivity(fileName))
+            else if (embyPlaying == true)
             {
-                // This file is in a Plex background activity (intro detection, thumbnails, etc.)
-                // as reported by the /activities endpoint
+                // Verified Emby playback - same priority as PlexPlayback, never defers
+                usageType = ConnectionUsageType.EmbyPlayback;
+            }
+            else if (plexPlaying == false && embyPlaying == null)
+            {
+                // Only Plex configured and says no playback = Plex background activity
                 usageType = ConnectionUsageType.PlexBackground;
+            }
+            else if (embyPlaying == false && plexPlaying == null)
+            {
+                // Only Emby configured and says no playback = Emby background activity
+                usageType = ConnectionUsageType.EmbyBackground;
+            }
+            else if (plexPlaying == false || embyPlaying == false)
+            {
+                // Both services configured but neither detected playback
+                // Could be race condition at stream start - use neutral streaming
+                usageType = ConnectionUsageType.BufferedStreaming;
             }
             else
             {
-                // Not in Plex playback or background activity - standard buffered streaming
+                // Neither media server configured = standard buffered streaming
                 usageType = ConnectionUsageType.BufferedStreaming;
             }
 

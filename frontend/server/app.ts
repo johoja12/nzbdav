@@ -42,7 +42,6 @@ app.use(async (req, res, next) => {
     req.method.toUpperCase() === "PROPFIND"
     || req.method.toUpperCase() === "OPTIONS"
     || req.path.startsWith("/api")
-    || req.path.startsWith("/health")
     || req.path.startsWith("/view")
     || req.path.startsWith("/.ids")
     || req.path.startsWith("/nzbs")

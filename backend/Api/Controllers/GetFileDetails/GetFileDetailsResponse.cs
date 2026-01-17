@@ -36,6 +36,8 @@ public class GetFileDetailsResponse
         public string ProviderHost { get; set; } = null!;
         public int SuccessfulSegments { get; set; }
         public int FailedSegments { get; set; }
+        public int TimeoutErrors { get; set; }
+        public int MissingArticleErrors { get; set; }
         public long TotalBytes { get; set; }
         public long TotalTimeMs { get; set; }
         public DateTimeOffset LastUsed { get; set; }

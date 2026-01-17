@@ -128,6 +128,8 @@ export type ProviderStatistic = {
     providerHost: string;
     successfulSegments: number;
     failedSegments: number;
+    timeoutErrors: number;
+    missingArticleErrors: number;
     totalBytes: number;
     totalTimeMs: number;
     lastUsed: string;

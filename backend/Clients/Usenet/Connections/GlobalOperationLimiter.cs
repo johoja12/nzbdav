@@ -40,6 +40,9 @@ public class GlobalOperationLimiter : IDisposable
             { ConnectionUsageType.BufferedStreaming, maxStreamingConnections },
             { ConnectionUsageType.PlexBackground, maxStreamingConnections }, // Share with Streaming
             { ConnectionUsageType.PlexPlayback, maxStreamingConnections }, // Share with Streaming (highest priority)
+            { ConnectionUsageType.EmbyPlayback, maxStreamingConnections }, // Share with Streaming (same priority as PlexPlayback)
+            { ConnectionUsageType.EmbyBackground, maxStreamingConnections }, // Share with Streaming
+            { ConnectionUsageType.EmbyStrmPlayback, maxStreamingConnections }, // Share with Streaming
             { ConnectionUsageType.Repair, maxHealthCheckConnections }, // Share with HealthCheck
             { ConnectionUsageType.Analysis, maxHealthCheckConnections }, // Share with HealthCheck
             { ConnectionUsageType.Unknown, maxStreamingConnections }
@@ -234,6 +237,9 @@ public class GlobalOperationLimiter : IDisposable
             ConnectionUsageType.BufferedStreaming => _streamingSemaphore,
             ConnectionUsageType.PlexBackground => _streamingSemaphore, // Share with Streaming
             ConnectionUsageType.PlexPlayback => _streamingSemaphore, // Share with Streaming (highest priority)
+            ConnectionUsageType.EmbyPlayback => _streamingSemaphore, // Share with Streaming (same priority as PlexPlayback)
+            ConnectionUsageType.EmbyBackground => _streamingSemaphore, // Share with Streaming
+            ConnectionUsageType.EmbyStrmPlayback => _streamingSemaphore, // Share with Streaming
             _ => _streamingSemaphore
         };
     }
@@ -274,7 +280,10 @@ public class GlobalOperationLimiter : IDisposable
             usageType == ConnectionUsageType.Streaming ||
             usageType == ConnectionUsageType.BufferedStreaming ||
             usageType == ConnectionUsageType.PlexBackground ||
-            usageType == ConnectionUsageType.PlexPlayback)
+            usageType == ConnectionUsageType.PlexPlayback ||
+            usageType == ConnectionUsageType.EmbyPlayback ||
+            usageType == ConnectionUsageType.EmbyBackground ||
+            usageType == ConnectionUsageType.EmbyStrmPlayback)
         {
             LogDebugForType(usageType, message, args);
             return;
@@ -297,6 +306,9 @@ public class GlobalOperationLimiter : IDisposable
             ConnectionUsageType.BufferedStreaming => LogComponents.BufferedStream,
             ConnectionUsageType.PlexBackground => LogComponents.BufferedStream,
             ConnectionUsageType.PlexPlayback => LogComponents.BufferedStream,
+            ConnectionUsageType.EmbyPlayback => LogComponents.BufferedStream,
+            ConnectionUsageType.EmbyBackground => LogComponents.BufferedStream,
+            ConnectionUsageType.EmbyStrmPlayback => LogComponents.BufferedStream,
             _ => LogComponents.Usenet
         };
     }

@@ -11,6 +11,8 @@ import { DeletedFilesTable } from "./components/DeletedFilesTable";
 import { MissingArticlesTable } from "./components/MissingArticlesTable";
 import { MappedFilesTable } from "./components/MappedFilesTable";
 import { LogsConsole } from "./components/LogsConsole";
+import RcloneStats from "./components/RcloneStats";
+import { IntegrationStats } from "./components/IntegrationStats";
 import { isAuthenticated } from "~/auth/authentication.server";
 import { FileDetailsModal } from "~/routes/health/components/file-details-modal/file-details-modal";
 import type { FileDetails } from "~/types/backend";
@@ -387,6 +389,12 @@ export default function StatsPage({ loaderData }: Route.ComponentProps) {
                 </Tab>
                 <Tab eventKey="logs" title="System Logs">
                     {activeTab === 'logs' && <LogsConsole />}
+                </Tab>
+                <Tab eventKey="rclone" title="Rclone">
+                    {activeTab === 'rclone' && <RcloneStats />}
+                </Tab>
+                <Tab eventKey="integrations" title="Integrations">
+                    {activeTab === 'integrations' && <IntegrationStats />}
                 </Tab>
             </Tabs>
             

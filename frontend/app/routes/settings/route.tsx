@@ -12,6 +12,7 @@ import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } fro
 import { GeneralSettings, isGeneralSettingsUpdated } from "./general/general";
 import { DebugSettings } from "./debug/debug";
 import { IntegrationsSettings, isIntegrationsSettingsUpdated, isIntegrationsSettingsValid } from "./integrations/integrations";
+import { RcloneSettings } from "./rclone/rclone";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -62,6 +63,8 @@ const defaultConfig = {
     "streaming-monitor.stop-debounce": "5",
     "plex.verify-playback": "true",
     "plex.servers": "[]",
+    "emby.verify-playback": "true",
+    "emby.servers": "[]",
     "sab.auto-pause": "true",
     "sab.servers": "[]",
     "sab.url": "",
@@ -190,6 +193,9 @@ function Body(props: BodyProps) {
                 </Tab>
                 <Tab eventKey="integrations" title={integrationsTitle}>
                     <IntegrationsSettings config={newConfig} setNewConfig={setNewConfig} />
+                </Tab>
+                <Tab eventKey="rclone" title="Rclone">
+                    <RcloneSettings />
                 </Tab>
             </Tabs>
             <hr />

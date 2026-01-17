@@ -42,6 +42,7 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
     public DbSet<NzbProviderStats> NzbProviderStats { get; set; }
     public DbSet<AnalysisHistoryItem> AnalysisHistoryItems { get; set; }
     public DbSet<ProviderBenchmarkResult> ProviderBenchmarkResults { get; set; }
+    public DbSet<RcloneInstance> RcloneInstances { get; set; }
 
     // tables
     protected override void OnModelCreating(ModelBuilder b)
@@ -562,6 +563,26 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                     x => DateTimeOffset.FromUnixTimeSeconds(x)
                 );
             e.HasIndex(i => i.LastSeen);
+        });
+
+        // RcloneInstance
+        b.Entity<RcloneInstance>(e =>
+        {
+            e.ToTable("RcloneInstances");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.Id).ValueGeneratedNever();
+            e.Property(i => i.CreatedAt)
+                .IsRequired()
+                .HasConversion(
+                    x => x.ToUnixTimeSeconds(),
+                    x => DateTimeOffset.FromUnixTimeSeconds(x)
+                );
+            e.Property(i => i.LastTestedAt)
+                .HasConversion(
+                    x => x.HasValue ? x.Value.ToUnixTimeSeconds() : (long?)null,
+                    x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
+                );
+            e.HasIndex(i => i.IsEnabled);
         });
     }
 }

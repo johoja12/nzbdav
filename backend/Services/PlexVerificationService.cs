@@ -1,18 +1,36 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Microsoft.Extensions.Hosting;
 using NzbWebDAV.Config;
 using Serilog;
 
 namespace NzbWebDAV.Services;
 
 /// <summary>
+/// Per-server health status for Plex/Emby servers.
+/// </summary>
+public record ServerHealth
+{
+    public string ServerName { get; init; } = "";
+    public string ServerType { get; init; } = "";  // "plex" or "emby"
+    public bool IsReachable { get; init; } = true;
+    public DateTime LastChecked { get; init; }
+    public DateTime? LastReachable { get; init; }
+    public string? LastError { get; init; }
+    public int ConsecutiveFailures { get; init; }
+}
+
+/// <summary>
 /// Verifies if NZBDav streaming is for actual user playback by checking Plex sessions.
 /// Plex /status/sessions only shows real user playback - not intro detection, thumbnails, etc.
+/// Implements IHostedService for proactive background polling with health tracking.
 /// </summary>
-public class PlexVerificationService
+public class PlexVerificationService : IHostedService, IDisposable
 {
     private readonly ConfigManager _configManager;
     private readonly HttpClient _httpClient;
+    private readonly WebhookService _webhookService;
 
     // Cache for active session file names (refreshed periodically)
     private HashSet<string> _activeSessionFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -22,17 +40,197 @@ public class PlexVerificationService
     private readonly object _cacheLock = new();
     private readonly TimeSpan _cacheExpiry = TimeSpan.FromSeconds(3);
 
+    // Background polling for proactive health tracking
+    private readonly ConcurrentDictionary<string, ServerHealth> _serverHealth = new();
+    private Timer? _pollTimer;
+    private CancellationTokenSource? _cts;
+    private bool _disposed;
+
     /// <summary>
     /// Static instance for access from non-DI contexts (e.g., NzbFileStream).
     /// Set automatically when the service is created via DI.
     /// </summary>
     public static PlexVerificationService? Instance { get; private set; }
 
-    public PlexVerificationService(ConfigManager configManager)
+    public PlexVerificationService(ConfigManager configManager, WebhookService webhookService)
     {
         _configManager = configManager;
+        _webhookService = webhookService;
         _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         Instance = this; // Set static instance for non-DI access
+    }
+
+    /// <summary>
+    /// Start background polling for proactive session cache and health tracking.
+    /// </summary>
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var config = _configManager.GetPlexConfig();
+
+        if (config.VerifyPlayback && config.Servers.Any(s => s.Enabled))
+        {
+            var pollInterval = _configManager.GetServerPollIntervalSeconds();
+            _pollTimer = new Timer(
+                PollServersCallback,
+                null,
+                TimeSpan.FromSeconds(5),  // Initial delay
+                TimeSpan.FromSeconds(pollInterval));
+            Log.Information("[PlexVerify] Background polling started ({Interval}s interval)", pollInterval);
+        }
+        else
+        {
+            Log.Debug("[PlexVerify] Background polling not started (verification disabled or no enabled servers)");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Stop background polling gracefully.
+    /// </summary>
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        Log.Information("[PlexVerify] Stopping background polling...");
+
+        _cts?.Cancel();
+
+        if (_pollTimer != null)
+        {
+            await _pollTimer.DisposeAsync();
+            _pollTimer = null;
+        }
+    }
+
+    private async void PollServersCallback(object? state)
+    {
+        if (_cts?.Token.IsCancellationRequested ?? true)
+            return;
+
+        try
+        {
+            await RefreshSessionCacheAsync();
+            await CheckServerHealthAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[PlexVerify] Background poll failed: {Error}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Check health of all enabled Plex servers and fire webhooks on state changes.
+    /// </summary>
+    private async Task CheckServerHealthAsync()
+    {
+        var config = _configManager.GetPlexConfig();
+        var enabledServers = config.Servers.Where(s => s.Enabled).ToList();
+
+        foreach (var server in enabledServers)
+        {
+            var previousHealth = _serverHealth.GetValueOrDefault(server.Name);
+            bool wasReachable = previousHealth?.IsReachable ?? true;
+
+            try
+            {
+                // Quick health check using existing GetServerSessionFilesAsync
+                await GetServerSessionFilesAsync(server, _cts?.Token ?? CancellationToken.None);
+
+                var newHealth = new ServerHealth
+                {
+                    ServerName = server.Name,
+                    ServerType = "plex",
+                    IsReachable = true,
+                    LastChecked = DateTime.UtcNow,
+                    LastReachable = DateTime.UtcNow,
+                    ConsecutiveFailures = 0
+                };
+                _serverHealth[server.Name] = newHealth;
+
+                // Fire recovery event if previously unreachable
+                if (!wasReachable && previousHealth != null)
+                {
+                    await OnServerRecovered(server, previousHealth);
+                }
+            }
+            catch (Exception ex)
+            {
+                var failures = (previousHealth?.ConsecutiveFailures ?? 0) + 1;
+                var newHealth = new ServerHealth
+                {
+                    ServerName = server.Name,
+                    ServerType = "plex",
+                    IsReachable = false,
+                    LastChecked = DateTime.UtcNow,
+                    LastReachable = previousHealth?.LastReachable,
+                    LastError = ex.Message,
+                    ConsecutiveFailures = failures
+                };
+                _serverHealth[server.Name] = newHealth;
+
+                // Fire unreachable event after 3 consecutive failures (avoid flapping)
+                if (wasReachable && failures >= 3)
+                {
+                    await OnServerUnreachable(server, newHealth);
+                }
+            }
+        }
+    }
+
+    private async Task OnServerUnreachable(PlexServer server, ServerHealth health)
+    {
+        Log.Warning("[PlexVerify] Server {Name} is unreachable: {Error}",
+            server.Name, health.LastError);
+
+        await _webhookService.FireEventAsync("server.unreachable", new
+        {
+            timestamp = DateTime.UtcNow,
+            serverType = "plex",
+            serverName = server.Name,
+            serverUrl = server.Url,
+            error = health.LastError,
+            consecutiveFailures = health.ConsecutiveFailures
+        });
+    }
+
+    private async Task OnServerRecovered(PlexServer server, ServerHealth previousHealth)
+    {
+        var downtime = previousHealth.LastChecked != default
+            ? DateTime.UtcNow - previousHealth.LastChecked
+            : TimeSpan.Zero;
+
+        Log.Information("[PlexVerify] Server {Name} recovered after {Downtime}",
+            server.Name, downtime);
+
+        await _webhookService.FireEventAsync("server.recovered", new
+        {
+            timestamp = DateTime.UtcNow,
+            serverType = "plex",
+            serverName = server.Name,
+            serverUrl = server.Url,
+            downtimeSeconds = downtime.TotalSeconds
+        });
+    }
+
+    /// <summary>
+    /// Get current health status of all configured Plex servers.
+    /// </summary>
+    public IReadOnlyDictionary<string, ServerHealth> GetServerHealthStatus()
+    {
+        return _serverHealth.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _pollTimer?.Dispose();
+        _httpClient.Dispose();
+
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>

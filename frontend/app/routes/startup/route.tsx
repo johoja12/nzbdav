@@ -34,7 +34,7 @@ export default function Startup({ loaderData }: Route.ComponentProps) {
     try {
       setStatus("connecting");
       // Use the health endpoint - doesn't require authentication
-      const response = await fetch("/health", {
+      const response = await fetch("/api/health", {
         method: "GET",
         signal: AbortSignal.timeout(5000),
       });

@@ -247,6 +247,8 @@ public class GetFileDetailsController(
                 ProviderHost = providerHosts.GetValueOrDefault(ps.ProviderIndex, $"Provider {ps.ProviderIndex}"),
                 SuccessfulSegments = ps.SuccessfulSegments,
                 FailedSegments = ps.FailedSegments,
+                TimeoutErrors = ps.TimeoutErrors,
+                MissingArticleErrors = ps.MissingArticleErrors,
                 TotalBytes = ps.TotalBytes,
                 TotalTimeMs = ps.TotalTimeMs,
                 LastUsed = ps.LastUsed,

@@ -35,6 +35,16 @@ public class NzbProviderStats
     public long TotalTimeMs { get; set; }
 
     /// <summary>
+    /// Number of timeout errors encountered
+    /// </summary>
+    public int TimeoutErrors { get; set; }
+
+    /// <summary>
+    /// Number of missing article (430) errors encountered
+    /// </summary>
+    public int MissingArticleErrors { get; set; }
+
+    /// <summary>
     /// Last time this provider was used for this NZB
     /// </summary>
     public DateTimeOffset LastUsed { get; set; }

@@ -144,6 +144,9 @@ public enum ConnectionUsageType
     Repair = 4,
     BufferedStreaming = 5,
     Analysis = 6,
-    PlexBackground = 7,  // Background Plex activity (intro detection, thumbnails, credits)
-    PlexPlayback = 8     // Verified real Plex playback - highest priority for fastest provider
+    PlexBackground = 7,   // Background Plex activity (intro detection, thumbnails, credits)
+    PlexPlayback = 8,     // Verified real Plex playback - highest priority for fastest provider
+    EmbyPlayback = 9,     // Verified Emby playback - same priority as PlexPlayback
+    EmbyBackground = 10,  // Background Emby activity
+    EmbyStrmPlayback = 11 // STRM file playback via Emby
 }

@@ -370,6 +370,22 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                                 <th>Provider</th>
                                                 <th>Success</th>
                                                 <th>Failed</th>
+                                                <th>
+                                                    <OverlayTrigger
+                                                        placement="top"
+                                                        overlay={<Tooltip>Timeout errors (segment fetch took too long)</Tooltip>}
+                                                    >
+                                                        <span style={{ cursor: 'help', borderBottom: '1px dotted' }}>Timeouts</span>
+                                                    </OverlayTrigger>
+                                                </th>
+                                                <th>
+                                                    <OverlayTrigger
+                                                        placement="top"
+                                                        overlay={<Tooltip>Missing article errors (430 - article not found on provider)</Tooltip>}
+                                                    >
+                                                        <span style={{ cursor: 'help', borderBottom: '1px dotted' }}>Missing</span>
+                                                    </OverlayTrigger>
+                                                </th>
                                                 <th>Success Rate</th>
                                                 <th>
                                                     <OverlayTrigger
@@ -403,6 +419,16 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                                         <td className={styles.numberCell}>
                                                             <Badge bg={stat.failedSegments > 0 ? "danger" : "secondary"}>
                                                                 {stat.failedSegments.toLocaleString()}
+                                                            </Badge>
+                                                        </td>
+                                                        <td className={styles.numberCell}>
+                                                            <Badge bg={stat.timeoutErrors > 0 ? "warning" : "secondary"} text={stat.timeoutErrors > 0 ? "dark" : undefined}>
+                                                                {stat.timeoutErrors.toLocaleString()}
+                                                            </Badge>
+                                                        </td>
+                                                        <td className={styles.numberCell}>
+                                                            <Badge bg={stat.missingArticleErrors > 0 ? "danger" : "secondary"}>
+                                                                {stat.missingArticleErrors.toLocaleString()}
                                                             </Badge>
                                                         </td>
                                                         <td className={styles.numberCell}>

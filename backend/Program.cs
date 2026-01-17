@@ -225,6 +225,9 @@ class Program
             .AddSingleton<NzbAnalysisService>()
             .AddSingleton<MediaAnalysisService>()
             .AddSingleton<PlexVerificationService>()
+            .AddHostedService(sp => sp.GetRequiredService<PlexVerificationService>())
+            .AddSingleton<EmbyVerificationService>()
+            .AddHostedService(sp => sp.GetRequiredService<EmbyVerificationService>())
             .AddSingleton<SabIntegrationService>()
             .AddSingleton<WebhookService>()
             .AddHostedService<StreamingMonitorService>()
@@ -286,6 +289,7 @@ class Program
         // ReservedConnectionsMiddleware removed - using GlobalOperationLimiter instead
         app.UseWebSockets();
         app.MapHealthChecks("/health");
+        app.MapHealthChecks("/api/health");
         app.Map("/ws", websocketManager.HandleRoute);
         app.MapControllers();
         app.UseWebdavBasicAuthentication();

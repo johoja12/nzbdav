@@ -8,12 +8,13 @@ namespace NzbWebDAV.Services;
 
 /// <summary>
 /// Monitors streaming activity and coordinates SABnzbd pause/resume
-/// based on verified Plex playback.
+/// based on verified Plex or Emby playback.
 /// </summary>
 public class StreamingMonitorService : IHostedService, IDisposable
 {
     private readonly ConfigManager _configManager;
     private readonly PlexVerificationService _plexVerificationService;
+    private readonly EmbyVerificationService _embyVerificationService;
     private readonly SabIntegrationService _sabIntegrationService;
     private readonly WebhookService _webhookService;
     private readonly UsenetStreamingClient _usenetClient;
@@ -30,12 +31,14 @@ public class StreamingMonitorService : IHostedService, IDisposable
     public StreamingMonitorService(
         ConfigManager configManager,
         PlexVerificationService plexVerificationService,
+        EmbyVerificationService embyVerificationService,
         SabIntegrationService sabIntegrationService,
         WebhookService webhookService,
         UsenetStreamingClient usenetClient)
     {
         _configManager = configManager;
         _plexVerificationService = plexVerificationService;
+        _embyVerificationService = embyVerificationService;
         _sabIntegrationService = sabIntegrationService;
         _webhookService = webhookService;
         _usenetClient = usenetClient;
@@ -151,16 +154,32 @@ public class StreamingMonitorService : IHostedService, IDisposable
                 if (_activeStreamCount == 0) return;
             }
 
-            // Check if this is real Plex playback
+            // Check if this is real playback from EITHER Plex OR Emby
             var plexConfig = _configManager.GetPlexConfig();
+            var embyConfig = _configManager.GetEmbyConfig();
+
+            bool isRealPlayback = false;
+
             if (plexConfig.VerifyPlayback)
             {
-                var isRealPlayback = await _plexVerificationService.IsAnyServerPlaying();
-                if (!isRealPlayback)
-                {
-                    Log.Warning("Stream detected but no Plex playback - skipping SAB pause (likely intro detection or thumbnail generation)");
-                    return;
-                }
+                isRealPlayback = await _plexVerificationService.IsAnyServerPlaying().ConfigureAwait(false);
+            }
+
+            if (!isRealPlayback && embyConfig.VerifyPlayback)
+            {
+                isRealPlayback = await _embyVerificationService.IsAnyServerPlaying().ConfigureAwait(false);
+            }
+
+            // If neither verification is enabled, assume real playback
+            if (!plexConfig.VerifyPlayback && !embyConfig.VerifyPlayback)
+            {
+                isRealPlayback = true;
+            }
+
+            if (!isRealPlayback)
+            {
+                Log.Warning("Stream detected but no Plex/Emby playback - skipping SAB pause (likely intro detection or thumbnail generation)");
+                return;
             }
 
             lock (_lock)
@@ -177,13 +196,13 @@ public class StreamingMonitorService : IHostedService, IDisposable
             {
                 timestamp = DateTime.UtcNow,
                 activeStreams = _activeStreamCount
-            });
+            }).ConfigureAwait(false);
 
             // Pause SABnzbd
             var sabConfig = _configManager.GetSabPauseConfig();
             if (sabConfig.AutoPause)
             {
-                await _sabIntegrationService.PauseAsync();
+                await _sabIntegrationService.PauseAsync().ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -196,20 +215,31 @@ public class StreamingMonitorService : IHostedService, IDisposable
     {
         try
         {
-            // Check if Plex still has active playback (more reliable than stream count)
+            // Check if EITHER Plex or Emby still has active playback
             var plexConfig = _configManager.GetPlexConfig();
+            var embyConfig = _configManager.GetEmbyConfig();
+
+            bool isStillPlaying = false;
+
             if (plexConfig.VerifyPlayback)
             {
-                var isStillPlaying = await _plexVerificationService.IsAnyServerPlaying();
-                if (isStillPlaying)
-                {
-                    Log.Debug("Plex still showing active playback, not resuming SABnzbd");
-                    return;
-                }
+                isStillPlaying = await _plexVerificationService.IsAnyServerPlaying().ConfigureAwait(false);
             }
-            else
+
+            if (!isStillPlaying && embyConfig.VerifyPlayback)
             {
-                // Fall back to stream count check if Plex verification disabled
+                isStillPlaying = await _embyVerificationService.IsAnyServerPlaying().ConfigureAwait(false);
+            }
+
+            if (isStillPlaying)
+            {
+                Log.Debug("Plex/Emby still showing active playback, not resuming SABnzbd");
+                return;
+            }
+
+            // If neither verification is enabled, fall back to stream count check
+            if (!plexConfig.VerifyPlayback && !embyConfig.VerifyPlayback)
+            {
                 lock (_lock)
                 {
                     if (_activeStreamCount > 0) return;
@@ -236,13 +266,13 @@ public class StreamingMonitorService : IHostedService, IDisposable
             {
                 timestamp = DateTime.UtcNow,
                 durationSeconds = duration.TotalSeconds
-            });
+            }).ConfigureAwait(false);
 
             // Resume SABnzbd
             var sabConfig = _configManager.GetSabPauseConfig();
             if (sabConfig.AutoPause)
             {
-                await _sabIntegrationService.ResumeAsync();
+                await _sabIntegrationService.ResumeAsync().ConfigureAwait(false);
             }
         }
         catch (Exception ex)

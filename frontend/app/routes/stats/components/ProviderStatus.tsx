@@ -21,7 +21,10 @@ function getTypeLabel(type: number) {
         5: "Buffer",
         6: "Analysis",
         7: "Plex BG",
-        8: "Plex"
+        8: "Plex",
+        9: "Emby",
+        10: "Emby BG",
+        11: "Emby STRM"
     };
     return map[type] || "Unknown";
 }
@@ -36,7 +39,10 @@ function getTypeColor(type: number) {
         5: "primary",
         6: "light",
         7: "dark",   // Plex background - muted/gray
-        8: "success" // Plex playback - verified real playback (highest priority)
+        8: "success", // Plex playback - verified real playback (highest priority)
+        9: "success", // Emby playback - same priority as Plex
+        10: "dark",   // Emby background - muted/gray
+        11: "success" // Emby STRM playback
     };
     return map[type] || "secondary";
 }
@@ -350,8 +356,10 @@ function ProviderCard({
                                     const queue = displayGroups.filter(g => g.usageType === 1);
                                     const health = displayGroups.filter(g => [3, 4].includes(g.usageType));
                                     const plexPlayback = displayGroups.filter(g => g.usageType === 8);
+                                    const embyPlayback = displayGroups.filter(g => [9, 11].includes(g.usageType)); // Emby + Emby STRM
                                     const buffer = displayGroups.filter(g => g.usageType === 5);
                                     const plexBg = displayGroups.filter(g => g.usageType === 7);
+                                    const embyBg = displayGroups.filter(g => g.usageType === 10);
                                     const other = displayGroups.filter(g => [0, 2, 6].includes(g.usageType));
 
                                     const renderSection = (title: string, items: GroupedConnection[]) => {
@@ -504,10 +512,12 @@ function ProviderCard({
                                     return (
                                         <>
                                             {renderSection("Plex Playback", plexPlayback)}
+                                            {renderSection("Emby Playback", embyPlayback)}
                                             {renderSection("Queue", queue)}
                                             {renderSection("Health", health)}
                                             {renderSection("Buffer", buffer)}
                                             {renderSection("Plex Background", plexBg)}
+                                            {renderSection("Emby Background", embyBg)}
                                             {renderSection("Other", other)}
                                         </>
                                     );

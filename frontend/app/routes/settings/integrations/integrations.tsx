@@ -14,6 +14,13 @@ interface PlexServer {
     enabled: boolean;
 }
 
+interface EmbyServer {
+    name: string;
+    url: string;
+    apiKey: string;
+    enabled: boolean;
+}
+
 interface PlexAuthState {
     step: 'idle' | 'waiting' | 'selecting' | 'error';
     pinId?: number;
@@ -58,6 +65,16 @@ export function IntegrationsSettings({ config, setNewConfig }: IntegrationsSetti
         }
     })();
 
+    // Emby settings
+    const embyVerifyEnabled = config["emby.verify-playback"] !== "false";
+    const embyServers: EmbyServer[] = (() => {
+        try {
+            return JSON.parse(config["emby.servers"] || "[]");
+        } catch {
+            return [];
+        }
+    })();
+
     // Webhook settings
     const webhooksEnabled = config["webhooks.enabled"] === "true";
     const webhookEndpoints: WebhookEndpoint[] = (() => {
@@ -70,6 +87,7 @@ export function IntegrationsSettings({ config, setNewConfig }: IntegrationsSetti
 
     // Connection test states
     const [plexTestStates, setPlexTestStates] = useState<Record<number, ConnectionState>>({});
+    const [embyTestStates, setEmbyTestStates] = useState<Record<number, ConnectionState>>({});
 
     // Plex sign-in state
     const [plexAuth, setPlexAuth] = useState<PlexAuthState>({ step: 'idle' });
@@ -92,6 +110,10 @@ export function IntegrationsSettings({ config, setNewConfig }: IntegrationsSetti
 
     const updatePlexServers = useCallback((servers: PlexServer[]) => {
         updateConfig("plex.servers", JSON.stringify(servers));
+    }, [updateConfig]);
+
+    const updateEmbyServers = useCallback((servers: EmbyServer[]) => {
+        updateConfig("emby.servers", JSON.stringify(servers));
     }, [updateConfig]);
 
     const updateWebhooks = useCallback((endpoints: WebhookEndpoint[]) => {
@@ -248,6 +270,51 @@ export function IntegrationsSettings({ config, setNewConfig }: IntegrationsSetti
             }));
         } catch {
             setPlexTestStates(prev => ({ ...prev, [index]: 'error' }));
+        }
+    }, []);
+
+    // Emby server handlers
+    const addEmbyServer = useCallback(() => {
+        updateEmbyServers([
+            ...embyServers,
+            { name: "", url: "", apiKey: "", enabled: true }
+        ]);
+    }, [embyServers, updateEmbyServers]);
+
+    const removeEmbyServer = useCallback((index: number) => {
+        updateEmbyServers(embyServers.filter((_, i) => i !== index));
+    }, [embyServers, updateEmbyServers]);
+
+    const updateEmbyServer = useCallback((index: number, field: keyof EmbyServer, value: string | boolean) => {
+        updateEmbyServers(
+            embyServers.map((server, i) =>
+                i === index ? { ...server, [field]: value } : server
+            )
+        );
+    }, [embyServers, updateEmbyServers]);
+
+    const testEmbyConnection = useCallback(async (index: number, url: string, apiKey: string) => {
+        if (!url.trim() || !apiKey.trim()) return;
+
+        setEmbyTestStates(prev => ({ ...prev, [index]: 'testing' }));
+
+        try {
+            const formData = new FormData();
+            formData.append('url', url);
+            formData.append('apiKey', apiKey);
+
+            const response = await fetch('/api/test-emby-connection', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            setEmbyTestStates(prev => ({
+                ...prev,
+                [index]: result.status && result.connected ? 'success' : 'error'
+            }));
+        } catch {
+            setEmbyTestStates(prev => ({ ...prev, [index]: 'error' }));
         }
     }, []);
 
@@ -420,6 +487,107 @@ export function IntegrationsSettings({ config, setNewConfig }: IntegrationsSetti
                 {plexServers.length === 0 && (
                     <div className={styles.formHelp}>
                         No Plex servers configured. Add a server to enable playback verification.
+                    </div>
+                )}
+            </div>
+
+            <hr className={styles.sectionDivider} />
+
+            {/* Emby Servers Section */}
+            <div className={styles.section}>
+                <div className={styles.sectionHeader}>
+                    <h5>Emby Servers</h5>
+                    <Button variant="outline-secondary" size="sm" onClick={addEmbyServer}>
+                        + Add Server
+                    </Button>
+                </div>
+
+                <div className={styles.toggleRow}>
+                    <span className={styles.toggleLabel}>Verify playback via Emby API</span>
+                    <Form.Check
+                        type="switch"
+                        checked={embyVerifyEnabled}
+                        onChange={(e) => updateConfig("emby.verify-playback", e.target.checked ? "true" : "false")}
+                    />
+                </div>
+
+                <div className={styles.formHelp}>
+                    When enabled, NZBDav will check Emby to verify real user playback before pausing SABnzbd.
+                </div>
+
+                {embyServers.map((server, index) => (
+                    <div key={index} className={styles.instanceCard}>
+                        <button
+                            className={styles.closeButton}
+                            onClick={() => removeEmbyServer(index)}
+                            title="Remove server"
+                        >
+                            &times;
+                        </button>
+
+                        <div className={styles.formGroup}>
+                            <input
+                                type="text"
+                                className={styles.formInput}
+                                placeholder="Server Name (e.g., NAS02 Emby)"
+                                value={server.name}
+                                onChange={(e) => updateEmbyServer(index, 'name', e.target.value)}
+                            />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <input
+                                type="text"
+                                className={styles.formInput}
+                                placeholder="URL (e.g., http://192.168.1.100:8096)"
+                                value={server.url}
+                                onChange={(e) => updateEmbyServer(index, 'url', e.target.value)}
+                            />
+                        </div>
+
+                        <div className={styles.inputGroup}>
+                            <input
+                                type="password"
+                                className={`${styles.formInput} ${styles.inputGroupInput}`}
+                                placeholder="Emby API Key"
+                                value={server.apiKey}
+                                onChange={(e) => updateEmbyServer(index, 'apiKey', e.target.value)}
+                            />
+                            <Button
+                                variant={
+                                    embyTestStates[index] === 'success' ? 'success' :
+                                    embyTestStates[index] === 'error' ? 'danger' : 'secondary'
+                                }
+                                onClick={() => testEmbyConnection(index, server.url, server.apiKey)}
+                                disabled={embyTestStates[index] === 'testing'}
+                                className={styles.testButton}
+                            >
+                                {embyTestStates[index] === 'testing' ? (
+                                    <Spinner animation="border" size="sm" />
+                                ) : embyTestStates[index] === 'success' ? (
+                                    "Connected"
+                                ) : embyTestStates[index] === 'error' ? (
+                                    "Failed"
+                                ) : (
+                                    "Test"
+                                )}
+                            </Button>
+                        </div>
+
+                        <div className={styles.toggleRow}>
+                            <span className={styles.toggleLabel}>Enabled</span>
+                            <Form.Check
+                                type="switch"
+                                checked={server.enabled}
+                                onChange={(e) => updateEmbyServer(index, 'enabled', e.target.checked)}
+                            />
+                        </div>
+                    </div>
+                ))}
+
+                {embyServers.length === 0 && (
+                    <div className={styles.formHelp}>
+                        No Emby servers configured. Add a server to enable playback verification.
                     </div>
                 )}
             </div>
@@ -625,6 +793,8 @@ export function isIntegrationsSettingsUpdated(
         "streaming-monitor.stop-debounce",
         "plex.verify-playback",
         "plex.servers",
+        "emby.verify-playback",
+        "emby.servers",
         "webhooks.enabled",
         "webhooks.endpoints"
     ];

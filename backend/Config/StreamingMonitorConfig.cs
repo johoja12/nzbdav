@@ -23,6 +23,20 @@ public record PlexConfig
     public List<PlexServer> Servers { get; init; } = new();
 }
 
+public record EmbyServer
+{
+    public string Name { get; init; } = "";
+    public string Url { get; init; } = "";
+    public string ApiKey { get; init; } = "";
+    public bool Enabled { get; init; } = true;
+}
+
+public record EmbyConfig
+{
+    public bool VerifyPlayback { get; init; } = true;
+    public List<EmbyServer> Servers { get; init; } = new();
+}
+
 // Support for multiple SABnzbd servers
 public record SabServer
 {

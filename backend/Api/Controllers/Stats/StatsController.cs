@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Config;
@@ -396,7 +397,7 @@ public class StatsController(
         return ExecuteSafely(async () =>
         {
             var totalMapped = await dbContext.LocalLinks.CountAsync();
-            
+
             // Join with Items to check MediaInfo
             var mappedItemsQuery = from link in dbContext.LocalLinks.AsNoTracking()
                                  join item in dbContext.Items.AsNoTracking() on link.DavItemId equals item.Id
@@ -440,6 +441,119 @@ public class StatsController(
                 HealthyCount = Math.Max(0, healthyCount),
                 UnhealthyCount = unhealthyCount
             });
+        });
+    }
+
+    [HttpGet("rclone")]
+    public Task<IActionResult> GetRcloneStats()
+    {
+        return ExecuteSafely(async () =>
+        {
+            var instances = await dbContext.RcloneInstances
+                .AsNoTracking()
+                .Where(i => i.IsEnabled)
+                .ToListAsync();
+
+            var results = new List<object>();
+
+            foreach (var instance in instances)
+            {
+                try
+                {
+                    using var client = new RcloneClient(instance);
+                    var coreStats = await client.GetCoreStatsExtendedAsync();
+                    var vfsStats = await client.GetVfsStatsExtendedAsync();
+                    var vfsTransfers = await client.GetVfsTransfersAsync();
+
+                    results.Add(new
+                    {
+                        instance = new
+                        {
+                            instance.Id,
+                            instance.Name,
+                            instance.Host,
+                            instance.Port
+                        },
+                        connected = true,
+                        version = coreStats?.Version,
+                        coreStats = coreStats == null ? null : new
+                        {
+                            bytes = coreStats.Bytes,
+                            transfers = coreStats.Transfers,
+                            speed = coreStats.Speed,
+                            errors = coreStats.Errors,
+                            lastError = coreStats.LastError,
+                            transferring = coreStats.Transferring?.Select(t => new
+                            {
+                                name = t.Name,
+                                bytes = t.Bytes,
+                                size = t.Size,
+                                percentage = t.Percentage,
+                                speed = t.Speed,
+                                speedAvg = t.SpeedAvg,
+                                eta = t.Eta
+                            })
+                        },
+                        vfsStats = vfsStats?.DiskCache == null ? null : new
+                        {
+                            bytesUsed = vfsStats.DiskCache.BytesUsed,
+                            files = vfsStats.DiskCache.Files,
+                            outOfSpace = vfsStats.DiskCache.OutOfSpace,
+                            uploadsInProgress = vfsStats.DiskCache.UploadsInProgress,
+                            uploadsQueued = vfsStats.DiskCache.UploadsQueued,
+                            cacheMaxSize = vfsStats.Opt?.CacheMaxSize ?? 0
+                        },
+                        vfsTransfers = vfsTransfers == null ? null : new
+                        {
+                            summary = vfsTransfers.Summary == null ? null : new
+                            {
+                                activeDownloads = vfsTransfers.Summary.ActiveDownloads,
+                                activeReads = vfsTransfers.Summary.ActiveReads,
+                                totalOpenFiles = vfsTransfers.Summary.TotalOpenFiles,
+                                outOfSpace = vfsTransfers.Summary.OutOfSpace,
+                                totalCacheBytes = vfsTransfers.Summary.TotalCacheBytes,
+                                totalCacheFiles = vfsTransfers.Summary.TotalCacheFiles
+                            },
+                            transfers = vfsTransfers.Transfers?.Select(t => new
+                            {
+                                name = t.Name,
+                                size = t.Size,
+                                opens = t.Opens,
+                                dirty = t.Dirty,
+                                lastAccess = t.LastAccess,
+                                cacheBytes = t.CacheBytes,
+                                cachePercentage = t.CachePercentage,
+                                cacheStatus = t.CacheStatus,
+                                downloading = t.Downloading,
+                                downloadBytes = t.DownloadBytes,
+                                downloadSpeed = t.DownloadSpeed,
+                                downloadSpeedAvg = t.DownloadSpeedAvg,
+                                readBytes = t.ReadBytes,
+                                readOffset = t.ReadOffset,
+                                readOffsetPercentage = t.ReadOffsetPercentage,
+                                readSpeed = t.ReadSpeed
+                            })
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new
+                    {
+                        instance = new
+                        {
+                            instance.Id,
+                            instance.Name,
+                            instance.Host,
+                            instance.Port
+                        },
+                        connected = false,
+                        error = ex.Message
+                    });
+                }
+            }
+
+            return Ok(results);
         });
     }
 }
