@@ -228,6 +228,7 @@ class Program
             .AddHostedService(sp => sp.GetRequiredService<PlexVerificationService>())
             .AddSingleton<EmbyVerificationService>()
             .AddHostedService(sp => sp.GetRequiredService<EmbyVerificationService>())
+            .AddSingleton<StrmKeyRegistry>()
             .AddSingleton<SabIntegrationService>()
             .AddSingleton<WebhookService>()
             .AddHostedService<StreamingMonitorService>()

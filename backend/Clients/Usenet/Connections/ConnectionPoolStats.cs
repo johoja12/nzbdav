@@ -76,7 +76,8 @@ public class ConnectionPoolStats
             c.UsageType == ConnectionUsageType.Streaming ||
             c.UsageType == ConnectionUsageType.BufferedStreaming ||
             c.UsageType == ConnectionUsageType.PlexPlayback ||
-            c.UsageType == ConnectionUsageType.PlexBackground);
+            c.UsageType == ConnectionUsageType.PlexBackground ||
+            c.UsageType == ConnectionUsageType.EmbyStrmPlayback);
     }
 
     public EventHandler<ConnectionPoolChangedEventArgs> GetOnConnectionPoolChanged(int providerIndex)

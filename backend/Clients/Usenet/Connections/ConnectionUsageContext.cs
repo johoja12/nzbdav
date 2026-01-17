@@ -17,6 +17,7 @@ public class ConnectionUsageDetails
     public long? CurrentBytePosition { get; set; }
     public long? FileSize { get; set; }
     public long? BaseByteOffset { get; set; }  // Starting byte offset for partial streams
+    public bool IsStrmRequest { get; set; }  // STRM file playback detected via downloadKey
 
     /// <summary>
     /// Forces all operations to use a specific provider index, bypassing affinity and load balancing.

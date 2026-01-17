@@ -3,12 +3,16 @@ using NzbWebDAV.Api.Controllers.GetWebdavItem;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 using NzbWebDAV.WebDav;
 
 namespace NzbWebDAV.Queue.PostProcessors;
 
-public class CreateStrmFilesPostProcessor(ConfigManager configManager, DavDatabaseClient dbClient)
+public class CreateStrmFilesPostProcessor(
+    ConfigManager configManager,
+    DavDatabaseClient dbClient,
+    StrmKeyRegistry strmKeyRegistry)
 {
     /// <summary>
     /// Create strm files using the default completed downloads directory (for Arr import)
@@ -69,6 +73,10 @@ public class CreateStrmFilesPostProcessor(ConfigManager configManager, DavDataba
         var strmKey = configManager.GetStrmKey();
         var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(strmKey, pathUrl);
         var extension = Path.GetExtension(davItem.Name).ToLower().TrimStart('.');
+
+        // Register the key for STRM playback detection
+        strmKeyRegistry.Register(downloadKey, davItem.Id, "Emby", davItem.Path);
+
         return $"{baseUrl}/view/{pathUrl}?downloadKey={downloadKey}&extension={extension}";
     }
 }
