@@ -46,7 +46,6 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
     })();
 
     const [sabTestStates, setSabTestStates] = useState<Record<number, ConnectionState>>({});
-    const [populateStatus, setPopulateStatus] = useState<{ loading: boolean; message?: string; error?: string }>({ loading: false });
 
     const updateSabServers = useCallback((servers: SabServer[]) => {
         setNewConfig(prev => ({
@@ -104,26 +103,6 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
     const onRefreshApiKey = useCallback(() => {
         setNewConfig({ ...config, "api.key": generateNewApiKey() })
     }, [setNewConfig, config]);
-
-    const onPopulateStrmLibrary = useCallback(async () => {
-        setPopulateStatus({ loading: true });
-        try {
-            const response = await fetch("/settings/maintenance/populate-strm", { method: "POST" });
-            const data = await response.json() as { message?: string; created?: number; skipped?: number; total?: number; error?: string };
-            if (!response.ok) {
-                throw new Error(data.error || "Failed to populate STRM library");
-            }
-            setPopulateStatus({
-                loading: false,
-                message: `${data.message} Created: ${data.created}, Skipped: ${data.skipped} (already exist)`
-            });
-        } catch (error: any) {
-            setPopulateStatus({
-                loading: false,
-                error: error.message || "Failed to populate STRM library"
-            });
-        }
-    }, []);
 
     return (
         <div className={styles.container}>
@@ -248,35 +227,6 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                         onChange={e => setNewConfig({ ...config, "general.base-url": e.target.value })} />
                     <Form.Text id="strm-base-url-help" muted>
                         The URL that Emby/Jellyfin will use to stream content. STRM files will contain URLs pointing to this address.
-                    </Form.Text>
-                </Form.Group>
-            }
-            {config["api.import-strategy"] === 'symlinks' && config["api.also-create-strm"] === "true" &&
-                <Form.Group className={styles.subGroup}>
-                    <Form.Label>Populate STRM Library</Form.Label>
-                    <div>
-                        <Button
-                            variant="secondary"
-                            onClick={onPopulateStrmLibrary}
-                            disabled={populateStatus.loading}>
-                            {populateStatus.loading ? (
-                                <>
-                                    <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
-                                    {' '}Populating...
-                                </>
-                            ) : (
-                                'Populate Existing Content'
-                            )}
-                        </Button>
-                    </div>
-                    {populateStatus.message && (
-                        <Form.Text className="text-success">{populateStatus.message}</Form.Text>
-                    )}
-                    {populateStatus.error && (
-                        <Form.Text className="text-danger">{populateStatus.error}</Form.Text>
-                    )}
-                    <Form.Text muted>
-                        Create STRM files for all existing video content in the database. Use this to populate your Emby library with content that was downloaded before enabling dual STRM output.
                     </Form.Text>
                 </Form.Group>
             }

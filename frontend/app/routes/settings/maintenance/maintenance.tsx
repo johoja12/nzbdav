@@ -3,6 +3,7 @@ import styles from "./maintenance.module.css"
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
 import { ConvertStrmToSymlinks } from "./strm-to-symlinks/strm-to-symlinks";
 import { ConnectionManagement } from "./connection-management/connection-management";
+import { PopulateStrmLibrary } from "./populate-strm-library/populate-strm-library";
 
 type MaintenanceProps = {
     savedConfig: Record<string, string>
@@ -38,6 +39,15 @@ export function Maintenance({ savedConfig }: MaintenanceProps) {
                     </Accordion.Header>
                     <Accordion.Body className={styles.accordionBody}>
                         <ConvertStrmToSymlinks savedConfig={savedConfig} />
+                    </Accordion.Body>
+                </Accordion.Item>
+
+                <Accordion.Item className={styles.accordionItem} eventKey="populate-strm-library">
+                    <Accordion.Header className={styles.accordionHeader}>
+                        Populate STRM Library
+                    </Accordion.Header>
+                    <Accordion.Body className={styles.accordionBody}>
+                        <PopulateStrmLibrary savedConfig={savedConfig} />
                     </Accordion.Body>
                 </Accordion.Item>
 
