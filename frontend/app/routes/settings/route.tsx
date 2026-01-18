@@ -11,6 +11,7 @@ import { Maintenance } from "./maintenance/maintenance";
 import { isRepairsSettingsUpdated, isRepairsSettingsValid, RepairsSettings } from "./repairs/repairs";
 import { GeneralSettings, isGeneralSettingsUpdated } from "./general/general";
 import { DebugSettings } from "./debug/debug";
+import { IntegrationsSettings, isIntegrationsSettingsUpdated, isIntegrationsSettingsValid } from "./integrations/integrations";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -56,6 +57,17 @@ const defaultConfig = {
     "analysis.enable": "true",
     "analysis.max-concurrent": "3",
     "provider-affinity.enable": "true",
+    "streaming-monitor.enabled": "false",
+    "streaming-monitor.start-debounce": "2",
+    "streaming-monitor.stop-debounce": "5",
+    "plex.verify-playback": "true",
+    "plex.servers": "[]",
+    "sab.auto-pause": "true",
+    "sab.servers": "[]",
+    "sab.url": "",
+    "sab.api-key": "",
+    "webhooks.enabled": "false",
+    "webhooks.endpoints": "[]",
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -95,7 +107,8 @@ function Body(props: BodyProps) {
     const isWebdavUpdated = isWebdavSettingsUpdated(config, newConfig);
     const isArrsUpdated = isArrsSettingsUpdated(config, newConfig);
     const isRepairsUpdated = isRepairsSettingsUpdated(config, newConfig);
-    const isUpdated = isGeneralUpdated || iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated;
+    const isIntegrationsUpdated = isIntegrationsSettingsUpdated(config, newConfig);
+    const isUpdated = isGeneralUpdated || iseUsenetUpdated || isSabnzbdUpdated || isWebdavUpdated || isArrsUpdated || isRepairsUpdated || isIntegrationsUpdated;
 
     const generalTitle = isGeneralUpdated ? "✏️ General" : "General";
     const usenetTitle = iseUsenetUpdated ? "✏️ Usenet" : "Usenet";
@@ -103,6 +116,7 @@ function Body(props: BodyProps) {
     const webdavTitle = isWebdavUpdated ? "✏️ WebDAV" : "WebDAV";
     const arrsTitle = isArrsUpdated ? "✏️ Radarr/Sonarr" : "Radarr/Sonarr";
     const repairsTitle = isRepairsUpdated ? "✏️ Repairs" : "Repairs";
+    const integrationsTitle = isIntegrationsUpdated ? "✏️ Integrations" : "Integrations";
 
     const saveButtonLabel = isSaving ? "Saving..."
         : !isUpdated && isSaved ? "Saved ✅"
@@ -111,6 +125,7 @@ function Body(props: BodyProps) {
         : isWebdavUpdated && !isWebdavSettingsValid(newConfig) ? "Invalid WebDAV settings"
         : isArrsUpdated && !isArrsSettingsValid(newConfig) ? "Invalid Arrs settings"
         : isRepairsUpdated && !isRepairsSettingsValid(newConfig) ? "Invalid Repairs settings"
+        : isIntegrationsUpdated && !isIntegrationsSettingsValid(newConfig) ? "Invalid Integrations settings"
         : "Save";
     const saveButtonVariant = saveButtonLabel === "Save" ? "primary"
         : saveButtonLabel === "Saved ✅" ? "success"
@@ -172,6 +187,9 @@ function Body(props: BodyProps) {
                 </Tab>
                 <Tab eventKey="maintenance" title="Maintenance">
                     <Maintenance savedConfig={config} />
+                </Tab>
+                <Tab eventKey="integrations" title={integrationsTitle}>
+                    <IntegrationsSettings config={newConfig} setNewConfig={setNewConfig} />
                 </Tab>
             </Tabs>
             <hr />

@@ -12,9 +12,16 @@ public class ConnectionPoolStats
     private readonly int _max;
     private int _totalLive;
     private int _totalIdle;
+    private int _lastStreamCount;
     private readonly UsenetProviderConfig _providerConfig;
     private readonly WebsocketManager _websocketManager;
     private readonly ConnectionPool<INntpClient>[] _connectionPools;
+
+    /// <summary>
+    /// Event fired when streaming connection count changes.
+    /// Used by StreamingMonitorService for SABnzbd auto-pause.
+    /// </summary>
+    public event EventHandler<StreamingChangedEventArgs>? OnStreamingChanged;
 
     public ConnectionPoolStats(UsenetProviderConfig providerConfig, WebsocketManager websocketManager)
     {
@@ -59,6 +66,17 @@ public class ConnectionPoolStats
         return result;
     }
 
+    /// <summary>
+    /// Gets the current count of streaming connections (Streaming + BufferedStreaming).
+    /// </summary>
+    public int GetStreamingConnectionCount()
+    {
+        var allConns = GetActiveConnections();
+        return allConns.Count(c =>
+            c.UsageType == ConnectionUsageType.Streaming ||
+            c.UsageType == ConnectionUsageType.BufferedStreaming);
+    }
+
     public EventHandler<ConnectionPoolChangedEventArgs> GetOnConnectionPoolChanged(int providerIndex)
     {
         return OnEvent;
@@ -99,7 +117,32 @@ public class ConnectionPoolStats
 
             var message = $"{providerIndex}|{args.Live}|{args.Idle}|{_totalLive}|{_max}|{_totalIdle}|{usageBreakdown}|{providerBreakdown}|{connsJson}";
             _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
+
+            // Check for streaming count changes and fire event
+            NotifyStreamingChangedIfNeeded();
         }
+    }
+
+    private void NotifyStreamingChangedIfNeeded()
+    {
+        var currentStreamCount = GetStreamingConnectionCount();
+
+        int previousCount;
+        lock (this)
+        {
+            if (currentStreamCount == _lastStreamCount)
+                return;
+
+            previousCount = _lastStreamCount;
+            _lastStreamCount = currentStreamCount;
+        }
+
+        // Only fire event if there was an actual change
+        OnStreamingChanged?.Invoke(this, new StreamingChangedEventArgs
+        {
+            ActiveStreamCount = currentStreamCount,
+            PreviousStreamCount = previousCount
+        });
     }
 
     private string GetGlobalUsageBreakdown()
@@ -147,4 +190,13 @@ public class ConnectionPoolStats
         public int Max { get; } = max;
         public int Active => Live - Idle;
     }
+}
+
+/// <summary>
+/// Event args for streaming state changes
+/// </summary>
+public class StreamingChangedEventArgs : EventArgs
+{
+    public int ActiveStreamCount { get; init; }
+    public int PreviousStreamCount { get; init; }
 }

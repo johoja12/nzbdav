@@ -6,11 +6,18 @@ import { LiveUsenetConnections } from "../live-usenet-connections/live-usenet-co
 
 export type LeftNavigationProps = {
     version?: string,
+    buildDate?: string,
+    gitBranch?: string,
+    gitCommit?: string,
+    gitRemote?: string,
+    gitUpstream?: string,
+    upstreamDate?: string,
+    originalDate?: string,
     isFrontendAuthDisabled?: boolean,
     statsEnabled?: boolean,
 }
 
-export function LeftNavigation({ version, isFrontendAuthDisabled, statsEnabled }: LeftNavigationProps) {
+export function LeftNavigation({ version, buildDate, gitBranch, gitCommit, gitRemote, gitUpstream, upstreamDate, originalDate, isFrontendAuthDisabled, statsEnabled }: LeftNavigationProps) {
     return (
         <div className={styles.container}>
             <Item target="/queue">
@@ -45,9 +52,19 @@ export function LeftNavigation({ version, isFrontendAuthDisabled, statsEnabled }
                 <div className={styles["footer-item"]}>
                     changelog
                 </div>
-                <div className={styles["footer-item"]}>
-                    version: {version || 'unknown'}
-                </div>
+                {(version || gitCommit || buildDate || gitUpstream) && (
+                    <div className={styles["build-info"]}>
+                        {gitUpstream && <div className={styles["footer-item"]}>fork of {gitUpstream}{upstreamDate && ` (${upstreamDate})`}</div>}
+                        {originalDate && <div className={styles["footer-item"]}>original ({originalDate})</div>}
+                        {version && <div className={styles["footer-item"]}>v{version}</div>}
+                        {gitCommit && (
+                            <div className={styles["footer-item"]}>
+                                {gitRemote && gitBranch ? `${gitRemote}:${gitBranch}` : gitBranch}@{gitCommit}
+                            </div>
+                        )}
+                        {buildDate && <div className={styles["footer-item"]}>built {buildDate}</div>}
+                    </div>
+                )}
                 {!isFrontendAuthDisabled && <>
                     <hr />
                     <Form method="post" action="/logout">

@@ -239,18 +239,47 @@ public class NzbProviderAffinityService
     }
 
     /// <summary>
-    /// Determines if background operations (HealthCheck, Queue) should defer to streaming
-    /// by choosing a non-fastest provider when streaming is active.
+    /// Determines if operations should defer by choosing a non-fastest provider.
+    /// Priority order: PlexPlayback > PlexBackground > BufferedStreaming > HealthCheck/Queue
+    ///
+    /// - PlexPlayback: Never defers (highest priority)
+    /// - PlexBackground: Defers only to PlexPlayback
+    /// - BufferedStreaming: Defers to both PlexPlayback and PlexBackground
+    /// - HealthCheck/Queue: Defers to all streaming types
     /// </summary>
     private bool ShouldDeferToStreaming(ConnectionUsageType? usageType, UsenetProviderConfig providerConfig)
     {
-        // Only apply to HealthCheck and Queue operations
-        if (usageType is not (ConnectionUsageType.HealthCheck or ConnectionUsageType.Queue))
+        // PlexPlayback never defers - it has highest priority
+        if (usageType == ConnectionUsageType.PlexPlayback)
             return false;
 
-        // Check if there is active streaming
-        var activeStreams = StreamingConnectionLimiter.Instance?.ActiveStreams ?? 0;
-        if (activeStreams == 0)
+        // Only these types can defer
+        if (usageType is not (ConnectionUsageType.HealthCheck or ConnectionUsageType.Queue or
+            ConnectionUsageType.PlexBackground or ConnectionUsageType.BufferedStreaming))
+            return false;
+
+        var limiter = StreamingConnectionLimiter.Instance;
+        var activeRealPlayback = limiter?.ActiveRealPlaybackStreams ?? 0;
+        var activePlexBackground = limiter?.ActivePlexBackgroundStreams ?? 0;
+
+        // Determine what this usage type should defer to
+        bool shouldDefer;
+        string deferReason;
+
+        if (usageType == ConnectionUsageType.BufferedStreaming)
+        {
+            // BufferedStreaming defers to both PlexPlayback AND PlexBackground
+            shouldDefer = activeRealPlayback > 0 || activePlexBackground > 0;
+            deferReason = $"{activeRealPlayback} PlexPlayback + {activePlexBackground} PlexBackground";
+        }
+        else
+        {
+            // PlexBackground, HealthCheck, Queue only defer to PlexPlayback
+            shouldDefer = activeRealPlayback > 0;
+            deferReason = $"{activeRealPlayback} PlexPlayback";
+        }
+
+        if (!shouldDefer)
             return false;
 
         // Check if there are multiple pooled providers (need at least 2 to defer)
@@ -260,8 +289,8 @@ public class NzbProviderAffinityService
         if (pooledProviderCount < 2)
             return false;
 
-        Log.Debug("[NzbProviderAffinity] Deferring {UsageType} to non-fastest provider: {ActiveStreams} active streams, {PooledCount} pooled providers",
-            usageType, activeStreams, pooledProviderCount);
+        Log.Debug("[NzbProviderAffinity] Deferring {UsageType} to non-fastest provider: {DeferReason} active, {PooledCount} pooled providers",
+            usageType, deferReason, pooledProviderCount);
 
         return true;
     }

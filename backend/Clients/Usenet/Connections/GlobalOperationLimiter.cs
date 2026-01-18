@@ -39,6 +39,7 @@ public class GlobalOperationLimiter : IDisposable
             { ConnectionUsageType.HealthCheck, maxHealthCheckConnections },
             { ConnectionUsageType.Streaming, maxStreamingConnections },
             { ConnectionUsageType.BufferedStreaming, maxStreamingConnections },
+            { ConnectionUsageType.PlexBackground, maxStreamingConnections }, // Share with Streaming
             { ConnectionUsageType.Repair, maxHealthCheckConnections }, // Share with HealthCheck
             { ConnectionUsageType.Analysis, maxHealthCheckConnections }, // Share with HealthCheck
             { ConnectionUsageType.Unknown, maxStreamingConnections }
@@ -191,6 +192,7 @@ public class GlobalOperationLimiter : IDisposable
             ConnectionUsageType.Analysis => _healthCheckSemaphore, // Share with HealthCheck
             ConnectionUsageType.Streaming => _streamingSemaphore,
             ConnectionUsageType.BufferedStreaming => _streamingSemaphore,
+            ConnectionUsageType.PlexBackground => _streamingSemaphore, // Share with Streaming
             _ => _streamingSemaphore
         };
     }
@@ -225,11 +227,12 @@ public class GlobalOperationLimiter : IDisposable
     private void LogInfoForType(ConnectionUsageType usageType, string message, params object[] args)
     {
         // HealthCheck and Streaming operations should log at Debug level to reduce noise
-        if (usageType == ConnectionUsageType.HealthCheck || 
-            usageType == ConnectionUsageType.Repair || 
+        if (usageType == ConnectionUsageType.HealthCheck ||
+            usageType == ConnectionUsageType.Repair ||
             usageType == ConnectionUsageType.Analysis ||
             usageType == ConnectionUsageType.Streaming ||
-            usageType == ConnectionUsageType.BufferedStreaming)
+            usageType == ConnectionUsageType.BufferedStreaming ||
+            usageType == ConnectionUsageType.PlexBackground)
         {
             LogDebugForType(usageType, message, args);
             return;
@@ -250,6 +253,7 @@ public class GlobalOperationLimiter : IDisposable
             ConnectionUsageType.Analysis => LogComponents.Analysis,
             ConnectionUsageType.Streaming => LogComponents.BufferedStream,
             ConnectionUsageType.BufferedStreaming => LogComponents.BufferedStream,
+            ConnectionUsageType.PlexBackground => LogComponents.BufferedStream,
             _ => LogComponents.Usenet
         };
     }

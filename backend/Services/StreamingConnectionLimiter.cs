@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Config;
 using Serilog;
 
@@ -15,6 +16,8 @@ public class StreamingConnectionLimiter : IDisposable
     private SemaphoreSlim _semaphore;
     private int _currentMaxConnections;
     private int _activeStreams;
+    private int _activeRealPlaybackStreams; // Verified Plex playback (PlexPlayback)
+    private int _activePlexBackgroundStreams; // Plex background activity (PlexBackground)
     private readonly object _lock = new();
 
     // Static instance for access from non-DI contexts (like BufferedSegmentStream)
@@ -64,24 +67,64 @@ public class StreamingConnectionLimiter : IDisposable
     public int ActiveStreams => _activeStreams;
 
     /// <summary>
-    /// Register a new stream starting. Used for monitoring/stats only.
+    /// Gets the number of verified real Plex playback streams (PlexPlayback type)
     /// </summary>
-    public void RegisterStream()
+    public int ActiveRealPlaybackStreams => _activeRealPlaybackStreams;
+
+    /// <summary>
+    /// Gets the number of Plex background activity streams (PlexBackground type)
+    /// </summary>
+    public int ActivePlexBackgroundStreams => _activePlexBackgroundStreams;
+
+    /// <summary>
+    /// Gets the total number of Plex-related streams (both PlexPlayback and PlexBackground)
+    /// </summary>
+    public int ActivePlexStreams => _activeRealPlaybackStreams + _activePlexBackgroundStreams;
+
+    /// <summary>
+    /// Register a new stream starting. Used for monitoring/stats and provider priority.
+    /// </summary>
+    /// <param name="streamType">The type of stream: PlexPlayback, PlexBackground, or other</param>
+    public void RegisterStream(ConnectionUsageType streamType)
     {
         Interlocked.Increment(ref _activeStreams);
-        Log.Debug("[StreamingConnectionLimiter] Stream registered. Active streams: {ActiveStreams}, Available: {Available}/{Total}",
-            _activeStreams, AvailableConnections, TotalConnections);
+        if (streamType == ConnectionUsageType.PlexPlayback)
+        {
+            Interlocked.Increment(ref _activeRealPlaybackStreams);
+        }
+        else if (streamType == ConnectionUsageType.PlexBackground)
+        {
+            Interlocked.Increment(ref _activePlexBackgroundStreams);
+        }
+        Log.Debug("[StreamingConnectionLimiter] Stream registered ({StreamType}). Active: {ActiveStreams} (PlexPlayback: {RealPlayback}, PlexBackground: {PlexBg}), Available: {Available}/{Total}",
+            streamType, _activeStreams, _activeRealPlaybackStreams, _activePlexBackgroundStreams, AvailableConnections, TotalConnections);
     }
 
     /// <summary>
-    /// Unregister a stream that has ended. Used for monitoring/stats only.
+    /// Unregister a stream that has ended. Used for monitoring/stats and provider priority.
     /// </summary>
-    public void UnregisterStream()
+    /// <param name="streamType">The type of stream: PlexPlayback, PlexBackground, or other</param>
+    public void UnregisterStream(ConnectionUsageType streamType)
     {
         Interlocked.Decrement(ref _activeStreams);
-        Log.Debug("[StreamingConnectionLimiter] Stream unregistered. Active streams: {ActiveStreams}, Available: {Available}/{Total}",
-            _activeStreams, AvailableConnections, TotalConnections);
+        if (streamType == ConnectionUsageType.PlexPlayback)
+        {
+            Interlocked.Decrement(ref _activeRealPlaybackStreams);
+        }
+        else if (streamType == ConnectionUsageType.PlexBackground)
+        {
+            Interlocked.Decrement(ref _activePlexBackgroundStreams);
+        }
+        Log.Debug("[StreamingConnectionLimiter] Stream unregistered ({StreamType}). Active: {ActiveStreams} (PlexPlayback: {RealPlayback}, PlexBackground: {PlexBg}), Available: {Available}/{Total}",
+            streamType, _activeStreams, _activeRealPlaybackStreams, _activePlexBackgroundStreams, AvailableConnections, TotalConnections);
     }
+
+    // Legacy overloads for backward compatibility
+    public void RegisterStream(bool isRealPlayback = true) =>
+        RegisterStream(isRealPlayback ? ConnectionUsageType.PlexPlayback : ConnectionUsageType.PlexBackground);
+
+    public void UnregisterStream(bool isRealPlayback = true) =>
+        UnregisterStream(isRealPlayback ? ConnectionUsageType.PlexPlayback : ConnectionUsageType.PlexBackground);
 
     /// <summary>
     /// Acquire a streaming connection permit. Blocks until one is available or timeout/cancellation.
