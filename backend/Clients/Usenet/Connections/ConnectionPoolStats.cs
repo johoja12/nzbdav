@@ -67,14 +67,16 @@ public class ConnectionPoolStats
     }
 
     /// <summary>
-    /// Gets the current count of streaming connections (Streaming + BufferedStreaming).
+    /// Gets the current count of streaming connections (all streaming types).
     /// </summary>
     public int GetStreamingConnectionCount()
     {
         var allConns = GetActiveConnections();
         return allConns.Count(c =>
             c.UsageType == ConnectionUsageType.Streaming ||
-            c.UsageType == ConnectionUsageType.BufferedStreaming);
+            c.UsageType == ConnectionUsageType.BufferedStreaming ||
+            c.UsageType == ConnectionUsageType.PlexPlayback ||
+            c.UsageType == ConnectionUsageType.PlexBackground);
     }
 
     public EventHandler<ConnectionPoolChangedEventArgs> GetOnConnectionPoolChanged(int providerIndex)
