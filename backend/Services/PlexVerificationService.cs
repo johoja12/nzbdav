@@ -58,27 +58,57 @@ public class PlexVerificationService
         var filename = Path.GetFileName(filePath);
         var filenameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
 
+        // First check with current cache
+        var (found, hadSessions) = CheckFileInCache(filename, filenameWithoutExt);
+        if (found)
+            return true;
+
+        // If cache had sessions but file wasn't found, this could be a race condition
+        // where Plex hasn't registered the new playback yet. Force an immediate refresh.
+        if (hadSessions)
+        {
+            Log.Debug("[PlexVerify] IsFilePlaying({File}): Cache miss with {Count} active sessions, forcing refresh",
+                filename, _activeSessionFiles.Count);
+            ForceRefreshCache();
+
+            // Check again after fresh refresh
+            var (foundAfterRefresh, _) = CheckFileInCache(filename, filenameWithoutExt);
+            if (foundAfterRefresh)
+                return true;
+
+            // Still not found after fresh refresh - this is likely background activity
+            lock (_cacheLock)
+            {
+                Log.Debug("[PlexVerify] IsFilePlaying({File}): False (not in {Count} active sessions after refresh: {Files})",
+                    filename, _activeSessionFiles.Count, string.Join(", ", _activeSessionFiles.Take(3)));
+            }
+            return false;
+        }
+
+        // No sessions in cache - assume real playback (safe default)
+        Log.Debug("[PlexVerify] IsFilePlaying({File}): True (no active sessions, assuming real playback)", filename);
+        return true;
+    }
+
+    /// <summary>
+    /// Check if file is in the current cache. Returns (found, hadSessions).
+    /// </summary>
+    private (bool found, bool hadSessions) CheckFileInCache(string filename, string filenameWithoutExt)
+    {
         lock (_cacheLock)
         {
-            // If cache is empty, assume real playback (safe default)
-            // This handles the race condition where streaming starts before Plex registers the session
             if (_activeSessionFiles.Count == 0)
-            {
-                Log.Debug("[PlexVerify] IsFilePlaying({File}): True (cache empty, assuming real playback)",
-                    filename);
-                return true;
-            }
+                return (false, false);
 
             // Try exact match first
             if (_activeSessionFiles.Contains(filename))
             {
                 Log.Debug("[PlexVerify] IsFilePlaying({File}): True (exact match, cache has {Count} files)",
                     filename, _activeSessionFiles.Count);
-                return true;
+                return (true, true);
             }
 
             // Try matching without extension (folder names vs filenames)
-            // e.g., "Movie.Name.2025" matches "Movie.Name.2025.mkv"
             foreach (var sessionFile in _activeSessionFiles)
             {
                 var sessionWithoutExt = Path.GetFileNameWithoutExtension(sessionFile);
@@ -89,24 +119,35 @@ public class PlexVerificationService
                 {
                     Log.Debug("[PlexVerify] IsFilePlaying({File}): True (prefix match with {SessionFile})",
                         filename, sessionFile);
-                    return true;
+                    return (true, true);
                 }
 
                 // Smart matching: compare normalized show name + episode identifier
-                // Handles Plex-renamed files like "Show Name - S01E02 - Episode Title.mkv"
-                // vs original releases like "Show.Name.S01E02.720p.WEB-DL.mkv"
                 if (IsSemanticMatch(filenameWithoutExt, sessionWithoutExt))
                 {
                     Log.Debug("[PlexVerify] IsFilePlaying({File}): True (semantic match with {SessionFile})",
                         filename, sessionFile);
-                    return true;
+                    return (true, true);
                 }
             }
 
-            // Only return false (background) when we have active sessions AND this file isn't one of them
-            Log.Debug("[PlexVerify] IsFilePlaying({File}): False (not in {Count} active sessions: {Files})",
-                filename, _activeSessionFiles.Count, string.Join(", ", _activeSessionFiles.Take(3)));
-            return false;
+            return (false, true);
+        }
+    }
+
+    /// <summary>
+    /// Force an immediate cache refresh, bypassing the expiry check.
+    /// </summary>
+    private void ForceRefreshCache()
+    {
+        try
+        {
+            var task = RefreshSessionCacheAsync();
+            task.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("[PlexVerify] Failed to force refresh session cache: {Error}", ex.Message);
         }
     }
 
