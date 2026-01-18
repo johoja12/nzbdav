@@ -40,6 +40,7 @@ public class GlobalOperationLimiter : IDisposable
             { ConnectionUsageType.Streaming, maxStreamingConnections },
             { ConnectionUsageType.BufferedStreaming, maxStreamingConnections },
             { ConnectionUsageType.PlexBackground, maxStreamingConnections }, // Share with Streaming
+            { ConnectionUsageType.PlexPlayback, maxStreamingConnections }, // Share with Streaming (highest priority)
             { ConnectionUsageType.Repair, maxHealthCheckConnections }, // Share with HealthCheck
             { ConnectionUsageType.Analysis, maxHealthCheckConnections }, // Share with HealthCheck
             { ConnectionUsageType.Unknown, maxStreamingConnections }
@@ -193,6 +194,7 @@ public class GlobalOperationLimiter : IDisposable
             ConnectionUsageType.Streaming => _streamingSemaphore,
             ConnectionUsageType.BufferedStreaming => _streamingSemaphore,
             ConnectionUsageType.PlexBackground => _streamingSemaphore, // Share with Streaming
+            ConnectionUsageType.PlexPlayback => _streamingSemaphore, // Share with Streaming (highest priority)
             _ => _streamingSemaphore
         };
     }
@@ -232,7 +234,8 @@ public class GlobalOperationLimiter : IDisposable
             usageType == ConnectionUsageType.Analysis ||
             usageType == ConnectionUsageType.Streaming ||
             usageType == ConnectionUsageType.BufferedStreaming ||
-            usageType == ConnectionUsageType.PlexBackground)
+            usageType == ConnectionUsageType.PlexBackground ||
+            usageType == ConnectionUsageType.PlexPlayback)
         {
             LogDebugForType(usageType, message, args);
             return;
@@ -254,6 +257,7 @@ public class GlobalOperationLimiter : IDisposable
             ConnectionUsageType.Streaming => LogComponents.BufferedStream,
             ConnectionUsageType.BufferedStreaming => LogComponents.BufferedStream,
             ConnectionUsageType.PlexBackground => LogComponents.BufferedStream,
+            ConnectionUsageType.PlexPlayback => LogComponents.BufferedStream,
             _ => LogComponents.Usenet
         };
     }
