@@ -280,7 +280,8 @@ public class NzbFileStream : Stream
                 FileDate = _usageContext.DetailsObject?.FileDate,
                 // Use the original FileSize from context if set (for multipart files), otherwise use stream size
                 FileSize = _usageContext.DetailsObject?.FileSize ?? _fileSize,
-                BaseByteOffset = totalBaseOffset  // Starting offset for this partial stream in the combined file
+                BaseByteOffset = totalBaseOffset,  // Starting offset for this partial stream in the combined file
+                ForcedProviderIndex = _usageContext.DetailsObject?.ForcedProviderIndex  // Preserve forced provider for benchmarks
             };
             var bufferedContext = new ConnectionUsageContext(
                 ConnectionUsageType.BufferedStreaming,

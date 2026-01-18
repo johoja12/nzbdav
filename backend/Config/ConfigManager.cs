@@ -345,7 +345,7 @@ public class ConfigManager
         return int.Parse(
             StringUtil.EmptyToNull(GetConfigValue("usenet.operation-timeout"))
             ?? StringUtil.EmptyToNull(Environment.GetEnvironmentVariable("USENET_OPERATION_TIMEOUT"))
-            ?? "180" // Increased from 90s to 180s for large NZBs and slower providers
+            ?? "60" // 60s default provides 3x safety margin over observed max read times (~17s)
         );
     }
 

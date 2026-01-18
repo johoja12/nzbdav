@@ -14,11 +14,9 @@ export type FileDetailsModalProps = {
     onRunHealthCheck?: (id: string) => void;
     onAnalyze?: (id: string) => void;
     onRepair?: (id: string) => void;
-    onTestDownload?: (id: string) => Promise<any>;
 }
 
-export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetStats, onRunHealthCheck, onAnalyze, onRepair, onTestDownload }: FileDetailsModalProps) {
-    const [testingDownload, setTestingDownload] = useState(false);
+export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetStats, onRunHealthCheck, onAnalyze, onRepair }: FileDetailsModalProps) {
     const [repairingClassification, setRepairingClassification] = useState(false);
     const [flushingCache, setFlushingCache] = useState(false);
     const { addToast } = useToast();
@@ -26,7 +24,7 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
 
     const handleFlushRcloneCache = async () => {
         if (!fileDetails) return;
-        
+
         setFlushingCache(true);
         try {
             const paths = [fileDetails.webdavPath];
@@ -49,16 +47,6 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
             addToast("An unexpected error occurred while flushing cache.", "danger", "Error");
         } finally {
             setFlushingCache(false);
-        }
-    };
-
-    const handleTestDownload = async () => {
-        if (!fileDetails || !onTestDownload) return;
-        setTestingDownload(true);
-        try {
-            await onTestDownload(fileDetails.davItemId);
-        } finally {
-            setTestingDownload(false);
         }
     };
 
@@ -158,26 +146,6 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                                         <i className="bi bi-file-earmark-zip me-1"></i>
                                                         Download NZB
                                                     </a>
-                                                )}
-                                                {onTestDownload && (
-                                                    <button
-                                                        className="btn btn-sm btn-outline-info"
-                                                        onClick={handleTestDownload}
-                                                        disabled={testingDownload}
-                                                        title="Downloads the first 10MB twice and compares hashes to verify stability"
-                                                    >
-                                                        {testingDownload ? (
-                                                            <>
-                                                                <Spinner animation="border" size="sm" className="me-1" />
-                                                                Testing...
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <i className="bi bi-check-all me-1"></i>
-                                                                Test Byte-Perfect
-                                                            </>
-                                                        )}
-                                                    </button>
                                                 )}
                                                 <button
                                                     className="btn btn-sm btn-outline-warning"
@@ -384,11 +352,11 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                             <section className={styles.section}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                                     <h5 style={{ margin: 0 }}>Provider Performance (NzbAffinity)</h5>
-                                    {onResetStats && (
+                                    {onResetStats && fileDetails.jobName && (
                                         <button
                                             className="btn btn-outline-danger btn-sm"
                                             onClick={async () => {
-                                                onResetStats(fileDetails.path);
+                                                onResetStats(fileDetails.jobName!);
                                             }}
                                         >
                                             Reset Stats

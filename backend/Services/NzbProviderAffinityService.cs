@@ -183,6 +183,14 @@ public class NzbProviderAffinityService
         _stats.TryRemove(jobName, out _);
     }
 
+    /// <summary>
+    /// Clear all in-memory statistics (when all stats are reset via API)
+    /// </summary>
+    public void ClearAllStats()
+    {
+        _stats.Clear();
+    }
+
     private async Task LoadStatsAsync()
     {
         try

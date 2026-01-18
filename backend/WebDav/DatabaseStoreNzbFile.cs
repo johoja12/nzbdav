@@ -47,7 +47,8 @@ public class DatabaseStoreNzbFile(
                 JobName = davNzbFile.Name,
                 AffinityKey = normalizedAffinityKey,
                 DavItemId = davNzbFile.Id,
-                FileDate = davNzbFile.ReleaseDate
+                FileDate = davNzbFile.ReleaseDate,
+                FileSize = davNzbFile.FileSize  // Total file size for UI display
             }
         );
 

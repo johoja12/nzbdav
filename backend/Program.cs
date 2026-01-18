@@ -56,11 +56,11 @@ class Program
 
         // Log build version to verify correct build is running
         Log.Warning("═══════════════════════════════════════════════════════════════");
-        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-15-STATS-NORMALIZE");
-        Log.Warning("  FEATURE: Fix real-time stats grouping duplicates");
-        Log.Warning("  - StatsController now uses normalized AffinityKey from context");
-        Log.Warning("  - Prevents duplicate entries (e.g., 'Movie.mkv' vs 'Movie')");
-        Log.Warning("  - Falls back to normalized path extraction if AffinityKey missing");
+        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-18-RETRY-PROVIDER-FIX");
+        Log.Warning("  FIX: Corruption retries now exclude failed provider");
+        Log.Warning("  - Each retry attempt uses a different provider");
+        Log.Warning("  - Improves retry effectiveness for corrupt/incomplete segments");
+        Log.Warning("  FIX: Per-read timeout configurable via operation timeout");
         Log.Warning("═══════════════════════════════════════════════════════════════");
 
         // Run Arr History Tester if requested

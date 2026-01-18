@@ -24,6 +24,19 @@ public class ConnectionUsageDetails
     /// </summary>
     public int? ForcedProviderIndex { get; init; }
 
+    /// <summary>
+    /// Provider indices to exclude from selection (e.g., providers that recently failed for this segment).
+    /// Used by straggler retry logic to try a different provider on each retry attempt.
+    /// </summary>
+    public HashSet<int>? ExcludedProviderIndices { get; set; }
+
+    /// <summary>
+    /// The provider index currently being used for this operation.
+    /// Set by MultiProviderNntpClient when a provider is selected, read by straggler detection
+    /// to know which provider to exclude on retry.
+    /// </summary>
+    public int? CurrentProviderIndex { get; set; }
+
     public override string ToString()
     {
         if (FileDate.HasValue)

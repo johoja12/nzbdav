@@ -89,7 +89,8 @@ public class DavMultipartFileStream(
                     DavItemId = _usageContext.DetailsObject?.DavItemId,
                     FileDate = _usageContext.DetailsObject?.FileDate,
                     FileSize = _usageContext.DetailsObject?.FileSize,
-                    BaseByteOffset = capturedOffset  // Cumulative offset for this part in the combined file
+                    BaseByteOffset = capturedOffset,  // Cumulative offset for this part in the combined file
+                    ForcedProviderIndex = _usageContext.DetailsObject?.ForcedProviderIndex  // Preserve forced provider for benchmarks
                 }
             );
 
