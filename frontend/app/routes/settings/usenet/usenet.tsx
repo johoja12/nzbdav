@@ -55,6 +55,8 @@ type BenchmarkResponse = {
     testFileSize?: number;
     testSizeMb?: number;
     results: BenchmarkResult[];
+    isComplete?: boolean;
+    totalProviders?: number;
 }
 
 type BenchmarkRunSummary = {
@@ -136,6 +138,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
     const [benchmarkProviders, setBenchmarkProviders] = useState<ProviderInfoDto[]>([]);
     const [selectedProviderIndices, setSelectedProviderIndices] = useState<Set<number>>(new Set());
     const [includeLoadBalanced, setIncludeLoadBalanced] = useState(true);
+    const [currentBenchmarkRunId, setCurrentBenchmarkRunId] = useState<string | null>(null);
 
     // handlers
     const handleStatsEnableChange = useCallback((checked: boolean) => {
@@ -223,18 +226,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         }}));
     }, [setConnections]);
 
-    const handleBenchmarkMessage = useCallback((message: string) => {
-        try {
-            const data: BenchmarkResponse = JSON.parse(message);
-            if (data.status && data.results) {
-                setBenchmarkResults(data);
-                setShowCurrentRun(true);
-            }
-        } catch (error) {
-            console.error("Failed to parse benchmark message:", error);
-        }
-    }, []);
-
+    // Define fetchBenchmarkHistory BEFORE handleBenchmarkMessage since it's used as a dependency
     const fetchBenchmarkHistory = useCallback(async () => {
         setIsLoadingHistory(true);
         try {
@@ -268,6 +260,38 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             console.error("Failed to fetch benchmark providers:", error);
         }
     }, []);
+
+    const handleBenchmarkMessage = useCallback((message: string) => {
+        try {
+            const data: BenchmarkResponse = JSON.parse(message);
+
+            // Only process messages for the current benchmark run
+            // This prevents stale "complete" messages from previous runs from triggering toasts
+            if (currentBenchmarkRunId && data.runId !== currentBenchmarkRunId) {
+                return;
+            }
+
+            if (data.status && data.results) {
+                setBenchmarkResults(data);
+                setShowCurrentRun(true);
+
+                // Check if benchmark is complete
+                if (data.isComplete) {
+                    setIsRunningBenchmark(false);
+                    setCurrentBenchmarkRunId(null);
+                    fetchBenchmarkHistory();
+                    addToast("Provider benchmark completed successfully.", "success", "Benchmark Complete");
+                }
+            } else if (data.isComplete && !data.status) {
+                // Benchmark completed with error
+                setIsRunningBenchmark(false);
+                setCurrentBenchmarkRunId(null);
+                addToast(data.error || "Benchmark failed", "danger", "Benchmark Error");
+            }
+        } catch (error) {
+            console.error("Failed to parse benchmark message:", error);
+        }
+    }, [fetchBenchmarkHistory, addToast, currentBenchmarkRunId]);
 
     const handleToggleProvider = useCallback((index: number) => {
         setSelectedProviderIndices(prev => {
@@ -308,21 +332,36 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                     includeLoadBalanced: includeLoadBalanced && selectedProviderIndices.size > 1
                 })
             });
-            const data = await response.json();
+            const data: BenchmarkResponse = await response.json();
 
             if (data.status) {
+                // Track this run's ID so we only process WebSocket messages for it
+                if (data.runId) {
+                    setCurrentBenchmarkRunId(data.runId);
+                }
+
+                // Set initial results (will be updated via WebSocket as providers complete)
                 setBenchmarkResults(data);
-                // Refresh history to include new result
-                fetchBenchmarkHistory();
-                addToast("Provider benchmark completed successfully.", "success", "Benchmark Complete");
+                setShowCurrentRun(true);
+
+                // If already complete (shouldn't happen normally), handle it
+                if (data.isComplete) {
+                    setIsRunningBenchmark(false);
+                    setCurrentBenchmarkRunId(null);
+                    fetchBenchmarkHistory();
+                    addToast("Provider benchmark completed successfully.", "success", "Benchmark Complete");
+                }
+                // Otherwise, keep isRunningBenchmark=true - WebSocket will update when complete
             } else {
+                // Immediate error (e.g., no test file found)
+                setIsRunningBenchmark(false);
                 addToast(data.error || "Benchmark failed", "danger", "Error");
             }
         } catch (error) {
-            addToast("Network error during benchmark: " + error, "danger", "Error");
-        } finally {
             setIsRunningBenchmark(false);
+            addToast("Network error during benchmark: " + error, "danger", "Error");
         }
+        // Note: Don't set isRunningBenchmark=false here - WebSocket handles completion
     }, [addToast, fetchBenchmarkHistory, selectedProviderIndices, includeLoadBalanced]);
 
     // effects
@@ -751,7 +790,8 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                             }
                             : null;
 
-                        const historyRunData = !showCurrentRun && benchmarkHistory[historyPage]
+                        // Fall back to history if no current run, or if explicitly viewing history
+                        const historyRunData = (!showCurrentRun || !benchmarkResults) && benchmarkHistory[historyPage]
                             ? { ...benchmarkHistory[historyPage], isCurrent: false }
                             : null;
 

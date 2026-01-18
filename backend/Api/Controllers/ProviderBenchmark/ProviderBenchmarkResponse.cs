@@ -21,6 +21,17 @@ public class ProviderBenchmarkResponse : BaseApiResponse
     public long TestFileSize { get; set; }
     public int TestSizeMb { get; set; }
     public List<ProviderBenchmarkResultDto> Results { get; set; } = new();
+
+    /// <summary>
+    /// True when the benchmark has completed (either success or failure).
+    /// Used by WebSocket progress updates to signal completion.
+    /// </summary>
+    public bool IsComplete { get; set; }
+
+    /// <summary>
+    /// Total number of providers to test (for progress calculation).
+    /// </summary>
+    public int TotalProviders { get; set; }
 }
 
 public class ProviderBenchmarkResultDto

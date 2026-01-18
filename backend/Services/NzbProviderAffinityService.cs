@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
@@ -12,13 +13,16 @@ namespace NzbWebDAV.Services;
 /// <summary>
 /// Tracks provider performance per NZB to optimize provider selection.
 /// Records success rates and download speeds to prefer fast, reliable providers for each NZB.
+/// Incorporates benchmark results with higher weight than per-segment speed.
 /// </summary>
 public class NzbProviderAffinityService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ConfigManager _configManager;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, ProviderPerformance>> _stats = new();
+    private readonly ConcurrentDictionary<int, BenchmarkSpeed> _benchmarkSpeeds = new();
     private readonly Timer _persistenceTimer;
+    private readonly Timer _benchmarkRefreshTimer;
     private readonly SemaphoreSlim _dbWriteLock = new(1, 1);
 
     public NzbProviderAffinityService(
@@ -31,9 +35,21 @@ public class NzbProviderAffinityService
         // Persist stats every 5 seconds
         _persistenceTimer = new Timer(PersistStats, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
-        // Load existing stats from database
-        _ = Task.Run(LoadStatsAsync);
+        // Refresh benchmark speeds every 60 seconds (in case new benchmarks are run)
+        _benchmarkRefreshTimer = new Timer(_ => _ = Task.Run(LoadBenchmarkSpeedsAsync), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(60));
+
+        // Load existing stats and benchmark data from database
+        _ = Task.Run(async () =>
+        {
+            await LoadStatsAsync().ConfigureAwait(false);
+            await LoadBenchmarkSpeedsAsync().ConfigureAwait(false);
+        });
     }
+
+    /// <summary>
+    /// Force reload of benchmark speeds from database (called after new benchmark completes)
+    /// </summary>
+    public Task RefreshBenchmarkSpeeds() => LoadBenchmarkSpeedsAsync();
 
     /// <summary>
     /// Record a successful segment download with timing information
@@ -68,8 +84,15 @@ public class NzbProviderAffinityService
     /// Uses epsilon-greedy strategy: exploits best provider most of the time,
     /// but explores other providers 10% of the time to gather performance data.
     /// Returns null if no preference exists or affinity is disabled.
+    ///
+    /// When usageType is HealthCheck or Queue and there is active buffered streaming,
+    /// prefers a non-fastest provider to give streaming priority on the fastest provider.
     /// </summary>
-    public int? GetPreferredProvider(string jobName, int totalProviders = 0, bool logDecision = false)
+    public int? GetPreferredProvider(
+        string jobName,
+        int totalProviders = 0,
+        bool logDecision = false,
+        ConnectionUsageType? usageType = null)
     {
         if (!_configManager.IsProviderAffinityEnabled()) return null;
         if (string.IsNullOrEmpty(jobName)) return null;
@@ -77,6 +100,9 @@ public class NzbProviderAffinityService
 
         // Get provider configuration for type filtering
         var providerConfig = _configManager.GetUsenetProviderConfig();
+
+        // Check if we should defer to non-fastest provider for background operations
+        var shouldDeferToStreaming = ShouldDeferToStreaming(usageType, providerConfig);
 
         // Epsilon-greedy exploration strategy: 10% exploration, 90% exploitation
         const double explorationRate = 0.10;
@@ -130,27 +156,114 @@ public class NzbProviderAffinityService
 
         if (eligibleProviders.Count == 0) return null;
 
-        // Find the maximum speed among all providers for normalization
-        var maxSpeed = eligibleProviders.Max(kvp => kvp.Value.AverageSpeedBps);
-        if (maxSpeed == 0) maxSpeed = 1; // Avoid division by zero
+        // Find the maximum segment speed among all providers for normalization
+        var maxSegmentSpeed = eligibleProviders.Max(kvp => kvp.Value.AverageSpeedBps);
+        if (maxSegmentSpeed == 0) maxSegmentSpeed = 1; // Avoid division by zero
+
+        // Find the maximum benchmark speed among providers that have benchmark data
+        var maxBenchmarkSpeed = _benchmarkSpeeds.Values
+            .Where(b => eligibleProviders.Any(p => p.Key == b.ProviderIndex))
+            .Select(b => b.SpeedMbps)
+            .DefaultIfEmpty(0)
+            .Max();
+        if (maxBenchmarkSpeed == 0) maxBenchmarkSpeed = 1; // Avoid division by zero
+
+        // Check if any eligible provider has benchmark data
+        var hasBenchmarkData = eligibleProviders.Any(p => _benchmarkSpeeds.ContainsKey(p.Key));
 
         var candidates = eligibleProviders
-            .Select(kvp => new
+            .Select(kvp =>
             {
-                ProviderIndex = kvp.Key,
-                Stats = kvp.Value,
-                // Score: 20% weight on success rate, 80% weight on speed
-                // Normalize both to 0-100 scale for fair comparison
-                NormalizedSuccessRate = kvp.Value.SuccessRate, // Already 0-100
-                NormalizedSpeed = (kvp.Value.AverageSpeedBps / (double)maxSpeed) * 100.0, // Normalize to 0-100
-                Score = (kvp.Value.SuccessRate * 0.2) + ((kvp.Value.AverageSpeedBps / (double)maxSpeed) * 100.0 * 0.8)
+                var normalizedSuccessRate = kvp.Value.SuccessRate; // Already 0-100
+                var normalizedSegmentSpeed = (kvp.Value.AverageSpeedBps / (double)maxSegmentSpeed) * 100.0;
+
+                double score;
+                if (hasBenchmarkData && _benchmarkSpeeds.TryGetValue(kvp.Key, out var benchmark))
+                {
+                    // With benchmark data:
+                    // - Success rate: 15% weight
+                    // - Benchmark speed: 55% weight (higher priority - more reliable measurement)
+                    // - Segment speed: 30% weight (real-world performance for this specific NZB)
+                    var normalizedBenchmarkSpeed = (benchmark.SpeedMbps / maxBenchmarkSpeed) * 100.0;
+                    score = (normalizedSuccessRate * 0.15) +
+                            (normalizedBenchmarkSpeed * 0.55) +
+                            (normalizedSegmentSpeed * 0.30);
+                }
+                else if (hasBenchmarkData)
+                {
+                    // Provider has no benchmark but others do - penalize slightly
+                    // Use segment speed only with reduced weight
+                    score = (normalizedSuccessRate * 0.20) +
+                            (normalizedSegmentSpeed * 0.50); // Max score of 70 without benchmark
+                }
+                else
+                {
+                    // No benchmark data available for any provider - use original formula
+                    // Success rate: 20% weight, Segment speed: 80% weight
+                    score = (normalizedSuccessRate * 0.20) +
+                            (normalizedSegmentSpeed * 0.80);
+                }
+
+                return new
+                {
+                    ProviderIndex = kvp.Key,
+                    Stats = kvp.Value,
+                    NormalizedSuccessRate = normalizedSuccessRate,
+                    NormalizedSegmentSpeed = normalizedSegmentSpeed,
+                    Score = score
+                };
             })
             .OrderByDescending(x => x.Score)
-            .FirstOrDefault();
+            .ToList();
 
-        if (candidates == null) return null;
+        if (candidates.Count == 0) return null;
 
-        return candidates.ProviderIndex;
+        // If we should defer to streaming, pick the second-best provider (if available)
+        // This gives streaming priority on the fastest provider
+        if (shouldDeferToStreaming && candidates.Count > 1)
+        {
+            var fastestProvider = candidates[0];
+            var secondBest = candidates[1];
+
+            if (logDecision)
+            {
+                Log.Debug("[NzbProviderAffinity] Background operation ({UsageType}) deferring to streaming: " +
+                          "using provider {SecondBest} (score={SecondScore:F1}) instead of fastest {Fastest} (score={FastestScore:F1})",
+                    usageType, secondBest.ProviderIndex, secondBest.Score, fastestProvider.ProviderIndex, fastestProvider.Score);
+            }
+
+            return secondBest.ProviderIndex;
+        }
+
+        return candidates[0].ProviderIndex;
+    }
+
+    /// <summary>
+    /// Determines if background operations (HealthCheck, Queue) should defer to streaming
+    /// by choosing a non-fastest provider when streaming is active.
+    /// </summary>
+    private bool ShouldDeferToStreaming(ConnectionUsageType? usageType, UsenetProviderConfig providerConfig)
+    {
+        // Only apply to HealthCheck and Queue operations
+        if (usageType is not (ConnectionUsageType.HealthCheck or ConnectionUsageType.Queue))
+            return false;
+
+        // Check if there is active streaming
+        var activeStreams = StreamingConnectionLimiter.Instance?.ActiveStreams ?? 0;
+        if (activeStreams == 0)
+            return false;
+
+        // Check if there are multiple pooled providers (need at least 2 to defer)
+        var pooledProviderCount = providerConfig.Providers.Count(p =>
+            p.Type == Models.ProviderType.Pooled || p.Type == Models.ProviderType.BackupAndStats);
+
+        if (pooledProviderCount < 2)
+            return false;
+
+        Log.Debug("[NzbProviderAffinity] Deferring {UsageType} to non-fastest provider: {ActiveStreams} active streams, {PooledCount} pooled providers",
+            usageType, activeStreams, pooledProviderCount);
+
+        return true;
     }
 
     /// <summary>
@@ -402,6 +515,55 @@ public class NzbProviderAffinityService
                 dbStats.LastUsed = now;
                 _isDirty = false;
             }
+        }
+    }
+
+    /// <summary>
+    /// Cached benchmark speed data for a provider
+    /// </summary>
+    private record BenchmarkSpeed(int ProviderIndex, string ProviderHost, double SpeedMbps, DateTimeOffset CreatedAt);
+
+    /// <summary>
+    /// Load the latest successful benchmark speed for each provider
+    /// </summary>
+    private async Task LoadBenchmarkSpeedsAsync()
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+
+            // Get the most recent successful benchmark result for each provider (non-load-balanced only)
+            var latestBenchmarks = await dbContext.ProviderBenchmarkResults
+                .AsNoTracking()
+                .Where(r => r.Success && !r.IsLoadBalanced && r.ProviderIndex >= 0)
+                .GroupBy(r => r.ProviderIndex)
+                .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
+                .ToListAsync()
+                .ConfigureAwait(false);
+
+            // Update the cache
+            _benchmarkSpeeds.Clear();
+            foreach (var benchmark in latestBenchmarks)
+            {
+                _benchmarkSpeeds[benchmark.ProviderIndex] = new BenchmarkSpeed(
+                    benchmark.ProviderIndex,
+                    benchmark.ProviderHost,
+                    benchmark.SpeedMbps,
+                    benchmark.CreatedAt
+                );
+            }
+
+            if (latestBenchmarks.Count > 0)
+            {
+                Log.Debug("[NzbProviderAffinity] Loaded {Count} benchmark speeds: {Speeds}",
+                    latestBenchmarks.Count,
+                    string.Join(", ", latestBenchmarks.Select(b => $"{b.ProviderHost}={b.SpeedMbps:F1}MB/s")));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "[NzbProviderAffinity] Failed to load benchmark speeds from database");
         }
     }
 }

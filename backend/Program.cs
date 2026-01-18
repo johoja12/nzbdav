@@ -56,11 +56,10 @@ class Program
 
         // Log build version to verify correct build is running
         Log.Warning("═══════════════════════════════════════════════════════════════");
-        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-18-RETRY-PROVIDER-FIX");
-        Log.Warning("  FIX: Corruption retries now exclude failed provider");
-        Log.Warning("  - Each retry attempt uses a different provider");
-        Log.Warning("  - Improves retry effectiveness for corrupt/incomplete segments");
-        Log.Warning("  FIX: Per-read timeout configurable via operation timeout");
+        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-18-NZBTESTER-FIX");
+        Log.Warning("  FEATURE: NzbFromDbTester connection limit fix (5x speedup)");
+        Log.Warning("  - Sets queue/healthcheck connections to 0 during streaming tests");
+        Log.Warning("  - Ensures GlobalOperationLimiter allocates all slots to streaming");
         Log.Warning("═══════════════════════════════════════════════════════════════");
 
         // Run Arr History Tester if requested

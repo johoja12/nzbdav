@@ -37,6 +37,12 @@ public class ConnectionUsageDetails
     /// </summary>
     public int? CurrentProviderIndex { get; set; }
 
+    /// <summary>
+    /// When true, the stream will throw an exception on permanent failures (e.g., article not found)
+    /// instead of zero-filling. Used by benchmarks to detect failures and stop early.
+    /// </summary>
+    public bool DisableGracefulDegradation { get; init; }
+
     public override string ToString()
     {
         if (FileDate.HasValue)
