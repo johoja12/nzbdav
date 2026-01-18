@@ -76,13 +76,12 @@ public class PlexVerificationService
             if (foundAfterRefresh)
                 return true;
 
-            // Still not found after fresh refresh - this is likely background activity
-            lock (_cacheLock)
-            {
-                Log.Debug("[PlexVerify] IsFilePlaying({File}): False (not in {Count} active sessions after refresh: {Files})",
-                    filename, _activeSessionFiles.Count, string.Join(", ", _activeSessionFiles.Take(3)));
-            }
-            return false;
+            // Still not found after fresh refresh - but Plex session registration can be slow.
+            // Default to PlexPlayback (true) to avoid penalizing real playback that just started.
+            // Background activity (thumbnails, intro detection) is typically short-lived anyway.
+            Log.Debug("[PlexVerify] IsFilePlaying({File}): True (not in cache but defaulting to playback - Plex may be slow to register)",
+                filename);
+            return true;
         }
 
         // No sessions in cache - assume real playback (safe default)
