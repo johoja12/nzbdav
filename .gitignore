@@ -36,4 +36,4 @@ local_data/
 *.nzb
 config/
 temp_config/
-backend/local_data/
+backend/local_data/PATCHES.md

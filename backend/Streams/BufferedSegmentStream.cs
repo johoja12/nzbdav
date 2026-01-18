@@ -367,9 +367,11 @@ public class BufferedSegmentStream : Stream
                                     if (activeAssignments.TryGetValue(victim, out var victimAssignment))
                                     {
                                         // Record which provider failed for the stalled segment (so retry uses different provider)
+                                        // Skip if ForcedProviderIndex is set - there's only one provider allowed, so exclusion is pointless
                                         var stalledContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
+                                        var hasForcedProvider = stalledContext.DetailsObject?.ForcedProviderIndex.HasValue ?? false;
                                         var failedProviderIndex = stalledContext.DetailsObject?.CurrentProviderIndex;
-                                        if (failedProviderIndex.HasValue)
+                                        if (failedProviderIndex.HasValue && !hasForcedProvider)
                                         {
                                             Log.Debug("[BufferedStream] Recording failed provider {ProviderIndex} for segment {Index}",
                                                 failedProviderIndex.Value, nextNeeded);
@@ -398,9 +400,11 @@ public class BufferedSegmentStream : Stream
                                     // No victim available (stalled segment is highest index)
                                     // Cancel the stalled worker itself to free its connection
                                     // Record which provider failed (so retry uses different provider)
+                                    // Skip if ForcedProviderIndex is set - there's only one provider allowed, so exclusion is pointless
                                     var stalledContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
+                                    var hasForcedProvider = stalledContext.DetailsObject?.ForcedProviderIndex.HasValue ?? false;
                                     var failedProviderIndex = stalledContext.DetailsObject?.CurrentProviderIndex;
-                                    if (failedProviderIndex.HasValue)
+                                    if (failedProviderIndex.HasValue && !hasForcedProvider)
                                     {
                                         Log.Debug("[BufferedStream] Recording failed provider {ProviderIndex} for segment {Index}",
                                             failedProviderIndex.Value, nextNeeded);
@@ -1005,7 +1009,24 @@ public class BufferedSegmentStream : Stream
             }
         }
 
-        // All retries failed - use graceful degradation
+        // All retries failed - check if graceful degradation is disabled (e.g., for benchmarks)
+        var disableGracefulDegradation = _usageContext?.DetailsObject?.DisableGracefulDegradation ?? false;
+        if (disableGracefulDegradation)
+        {
+            // Clean up provider exclusions before throwing
+            if (baseDetails != null)
+            {
+                baseDetails.ExcludedProviderIndices = null;
+            }
+
+            var reason = lastException?.Message ?? "Unknown error after all retries exhausted";
+            Log.Warning("[BufferedStream] PERMANENT FAILURE (graceful degradation disabled): Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}) failed after {MaxRetries} attempts. Throwing exception. Last error: {LastError}",
+                jobName, index, segmentIds.Length, segmentId, maxRetries, reason);
+
+            throw new PermanentSegmentFailureException(index, segmentId, reason);
+        }
+
+        // Use graceful degradation (zero-fill)
         Log.Error("[BufferedStream] GRACEFUL DEGRADATION: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}) failed after {MaxRetries} attempts. Substituting with zeros to allow stream to continue. Last error: {LastError}",
             jobName, index, segmentIds.Length, segmentId, maxRetries, lastException?.Message ?? "Unknown");
 

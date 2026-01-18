@@ -368,7 +368,7 @@ public class MultiProviderNntpClient : INntpClient
             {
                 // Only log affinity decisions for buffer streaming operations
                 var logDecision = context.UsageType == ConnectionUsageType.BufferedStreaming;
-                var preferredIndex = _affinityService.GetPreferredProvider(affinityKey, Providers.Count, logDecision);
+                var preferredIndex = _affinityService.GetPreferredProvider(affinityKey, Providers.Count, logDecision, context.UsageType);
                 if (preferredIndex.HasValue && preferredIndex.Value >= 0 && preferredIndex.Value < Providers.Count)
                 {
                     // Skip affinity provider if it's in the excluded list
@@ -440,7 +440,7 @@ public class MultiProviderNntpClient : INntpClient
             {
                 // Log affinity decisions for buffer streaming
                 var logDecision = context.UsageType == ConnectionUsageType.BufferedStreaming;
-                var preferredIndex = _affinityService.GetPreferredProvider(affinityKey, Providers.Count, logDecision);
+                var preferredIndex = _affinityService.GetPreferredProvider(affinityKey, Providers.Count, logDecision, context.UsageType);
                 if (preferredIndex.HasValue && preferredIndex.Value >= 0 && preferredIndex.Value < Providers.Count)
                 {
                     // Skip affinity provider if it's in the excluded list
