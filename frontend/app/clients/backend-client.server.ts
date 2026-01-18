@@ -460,9 +460,74 @@ class BackendClient {
         const data = await response.json();
         return data.resetCount;
     }
-}
 
-    
+    // Arr Path Mappings methods
+
+    public async getArrPathMappings(): Promise<{ status: boolean; mappings?: Record<string, any[]>; error?: string }> {
+        const url = process.env.BACKEND_URL + "/api/arr-path-mappings";
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await this.fetchWithTimeout(url, { headers: { "x-api-key": apiKey } });
+        return response.json();
+    }
+
+    public async saveArrPathMappings(host: string, mappingsJson: string): Promise<{ status: boolean; error?: string }> {
+        const url = process.env.BACKEND_URL + "/api/arr-path-mappings";
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await this.fetchWithTimeout(url, {
+            method: "POST",
+            headers: { "x-api-key": apiKey },
+            body: (() => {
+                const form = new FormData();
+                form.append("host", host);
+                form.append("mappings", mappingsJson);
+                return form;
+            })()
+        });
+        return response.json();
+    }
+
+    public async testArrPathMapping(
+        host: string,
+        apiKey: string,
+        nzbdavPrefix: string,
+        arrPrefix: string
+    ): Promise<{ status: boolean; success?: boolean; message?: string; testResults?: any[]; error?: string }> {
+        const url = process.env.BACKEND_URL + "/api/arr-path-mappings/test";
+        const backendApiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await this.fetchWithTimeout(url, {
+            method: "POST",
+            headers: { "x-api-key": backendApiKey },
+            body: (() => {
+                const form = new FormData();
+                form.append("host", host);
+                form.append("apiKey", apiKey);
+                form.append("nzbdavPrefix", nzbdavPrefix);
+                form.append("arrPrefix", arrPrefix);
+                return form;
+            })()
+        });
+        return response.json();
+    }
+
+    public async getArrRootFolders(
+        host: string,
+        apiKey: string
+    ): Promise<{ status: boolean; rootFolders?: { path: string; freeSpace: number }[]; error?: string }> {
+        const url = process.env.BACKEND_URL + "/api/arr-path-mappings/root-folders";
+        const backendApiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await this.fetchWithTimeout(url, {
+            method: "POST",
+            headers: { "x-api-key": backendApiKey },
+            body: (() => {
+                const form = new FormData();
+                form.append("host", host);
+                form.append("apiKey", apiKey);
+                return form;
+            })()
+        });
+        return response.json();
+    }
+}
 
     export const backendClient = new BackendClient();
 

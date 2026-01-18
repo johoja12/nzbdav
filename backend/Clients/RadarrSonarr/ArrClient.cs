@@ -28,6 +28,21 @@ public class ArrClient(string host, string apiKey)
     private string ApiKey { get; } = apiKey;
     private const string BasePath = "/api/v3";
 
+    /// <summary>
+    /// Path mappings for translating between NZBDav and Arr paths.
+    /// </summary>
+    public ArrPathMappings PathMappings { get; set; } = new();
+
+    /// <summary>
+    /// Translate a NZBDav path to this Arr instance's path format.
+    /// </summary>
+    protected string TranslateToArrPath(string nzbdavPath) => PathMappings.TranslateToArrPath(nzbdavPath);
+
+    /// <summary>
+    /// Translate an Arr path back to NZBDav path format.
+    /// </summary>
+    protected string TranslateFromArrPath(string arrPath) => PathMappings.TranslateFromArrPath(arrPath);
+
     public Task<ArrApiInfoResponse> GetApiInfo() =>
         GetRoot<ArrApiInfoResponse>($"/api");
 
