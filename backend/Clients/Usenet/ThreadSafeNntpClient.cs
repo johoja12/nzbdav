@@ -22,9 +22,9 @@ public class ThreadSafeNntpClient : INntpClient
     private string? _currentGroup;
     private BufferToEndStream? _activeBufferStream;
 
-    public ThreadSafeNntpClient(BandwidthService? bandwidthService = null, int providerIndex = -1)
+    public ThreadSafeNntpClient(BandwidthService? bandwidthService = null, int providerIndex = -1, int operationTimeoutSeconds = 60)
     {
-        _client = new UsenetClient();
+        _client = new UsenetClient { OperationTimeoutSeconds = operationTimeoutSeconds };
         _bandwidthService = bandwidthService;
         _providerIndex = providerIndex;
     }

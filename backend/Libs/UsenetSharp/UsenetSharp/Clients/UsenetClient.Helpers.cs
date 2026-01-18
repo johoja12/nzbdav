@@ -61,7 +61,7 @@ public partial class UsenetClient
     private CancellationTokenSource CreateCtsWithTimeout(CancellationToken cancellationToken)
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(TimeSpan.FromSeconds(10));
+        cts.CancelAfter(TimeSpan.FromSeconds(OperationTimeoutSeconds));
         return cts;
     }
 

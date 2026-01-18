@@ -187,6 +187,9 @@ public class BufferedSegmentStream : Stream
     private readonly List<(int Index, string SegmentId)> _corruptedSegments = new();
     private int _lastSuccessfulSegmentSize = 0;
 
+    // Track which providers have failed for each segment (for straggler retry with different provider)
+    private readonly ConcurrentDictionary<int, HashSet<int>> _failedProvidersPerSegment = new();
+
     // NOTE: Batch segment assignment and worker-provider affinity were tested but caused more duplicate
     // fetches and slower performance. The dynamic availability-ratio selection in
     // MultiProviderNntpClient.GetBalancedProviders() is more effective at distributing load.
@@ -363,6 +366,20 @@ public class BufferedSegmentStream : Stream
                                 {
                                     if (activeAssignments.TryGetValue(victim, out var victimAssignment))
                                     {
+                                        // Record which provider failed for the stalled segment (so retry uses different provider)
+                                        var stalledContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
+                                        var failedProviderIndex = stalledContext.DetailsObject?.CurrentProviderIndex;
+                                        if (failedProviderIndex.HasValue)
+                                        {
+                                            Log.Debug("[BufferedStream] Recording failed provider {ProviderIndex} for segment {Index}",
+                                                failedProviderIndex.Value, nextNeeded);
+                                            _failedProvidersPerSegment.AddOrUpdate(
+                                                nextNeeded,
+                                                _ => new HashSet<int> { failedProviderIndex.Value },
+                                                (_, set) => { lock (set) { set.Add(failedProviderIndex.Value); } return set; }
+                                            );
+                                        }
+
                                         Log.Debug("[BufferedStream] STRAGGLER DETECTED: Segment {Index} running for {Duration}s. Preempting Segment {Victim} to race.", nextNeeded, duration.TotalSeconds, victim);
 
                                         // Cancel victim to free up its worker
@@ -380,6 +397,20 @@ public class BufferedSegmentStream : Stream
                                 {
                                     // No victim available (stalled segment is highest index)
                                     // Cancel the stalled worker itself to free its connection
+                                    // Record which provider failed (so retry uses different provider)
+                                    var stalledContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
+                                    var failedProviderIndex = stalledContext.DetailsObject?.CurrentProviderIndex;
+                                    if (failedProviderIndex.HasValue)
+                                    {
+                                        Log.Debug("[BufferedStream] Recording failed provider {ProviderIndex} for segment {Index}",
+                                            failedProviderIndex.Value, nextNeeded);
+                                        _failedProvidersPerSegment.AddOrUpdate(
+                                            nextNeeded,
+                                            _ => new HashSet<int> { failedProviderIndex.Value },
+                                            (_, set) => { lock (set) { set.Add(failedProviderIndex.Value); } return set; }
+                                        );
+                                    }
+
                                     Log.Debug("[BufferedStream] STRAGGLER SELF-CANCEL: Segment {Index} running for {Duration}s. Cancelling stalled worker and queueing for retry.", nextNeeded, duration.TotalSeconds);
                                     assignment.Cts.Cancel();
                                     _ = urgentChannel.Writer.WriteAsync((nextNeeded, segmentIds[nextNeeded]), ct);
@@ -553,7 +584,43 @@ public class BufferedSegmentStream : Stream
 
                             // Create job-specific CTS for preemption (no hard timeout - straggler monitor handles stuck segments)
                             using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                            using var _scope = jobCts.Token.SetScopedContext(ct.GetContext<ConnectionUsageContext>());
+
+                            // Get the base context - we share the DetailsObject to ensure stats updates
+                            // (BufferedCount, CurrentBytePosition, etc.) are visible to the connection pool
+                            var baseContext = ct.GetContext<ConnectionUsageContext>();
+                            var baseDetails = baseContext.DetailsObject;
+
+                            // Set per-job exclusions directly on the shared DetailsObject
+                            // This is safe because provider selection reads these at the start of each operation
+                            if (baseDetails != null)
+                            {
+                                if (_failedProvidersPerSegment.TryGetValue(job.index, out var failed))
+                                {
+                                    HashSet<int>? excludedProviders;
+                                    lock (failed)
+                                    {
+                                        excludedProviders = new HashSet<int>(failed);
+                                    }
+                                    if (excludedProviders.Count > 0)
+                                    {
+                                        Log.Debug("[BufferedStream] Segment {Index} excluding providers [{Providers}] due to previous straggler failures",
+                                            job.index, string.Join(",", excludedProviders));
+                                        baseDetails.ExcludedProviderIndices = excludedProviders;
+                                    }
+                                    else
+                                    {
+                                        baseDetails.ExcludedProviderIndices = null;
+                                    }
+                                }
+                                else
+                                {
+                                    baseDetails.ExcludedProviderIndices = null;
+                                }
+                            }
+
+                            // Use the base context directly so stats updates are visible to connection tracking
+                            using var _scope = jobCts.Token.SetScopedContext(baseContext);
+
                             var assignment = (DateTimeOffset.UtcNow, jobCts, workerId);
                             
                             // Track assignment
@@ -728,15 +795,25 @@ public class BufferedSegmentStream : Stream
         var jobName = _usageContext?.DetailsObject?.Text ?? "Unknown";
         var fetchStartTime = Stopwatch.StartNew();
 
+        // Track providers that failed for this segment to exclude on retries
+        var excludedProviders = new HashSet<int>();
+        var baseDetails = _usageContext?.DetailsObject;
+
         for (int attempt = 0; attempt < maxRetries; attempt++)
         {
             // Exponential backoff: 0s, 1s, 2s, 4s
             if (attempt > 0)
             {
                 var delaySeconds = Math.Pow(2, attempt - 1);
-                Log.Warning("[BufferedStream] RETRY: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, Waiting {Delay}s before retry",
-                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, delaySeconds);
+                Log.Warning("[BufferedStream] RETRY: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, Waiting {Delay}s before retry, ExcludingProviders=[{ExcludedProviders}]",
+                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, delaySeconds, string.Join(",", excludedProviders));
                 await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct).ConfigureAwait(false);
+            }
+
+            // Set excluded providers before each attempt (including first attempt for straggler re-retries)
+            if (baseDetails != null)
+            {
+                baseDetails.ExcludedProviderIndices = excludedProviders.Count > 0 ? excludedProviders : null;
             }
 
             Stream? stream = null;
@@ -858,6 +935,13 @@ public class BufferedSegmentStream : Stream
                             computed = Math.Max(initial, totalRead);
                         } while (initial != computed && Interlocked.CompareExchange(ref _lastSuccessfulSegmentSize, computed, initial) != initial);
                     }
+
+                    // Clean up provider exclusions before returning
+                    if (baseDetails != null)
+                    {
+                        baseDetails.ExcludedProviderIndices = null;
+                    }
+
                     return new PooledSegmentData(segmentId, buffer, totalRead);
                 }
                 catch
@@ -869,12 +953,20 @@ public class BufferedSegmentStream : Stream
             catch (InvalidDataException ex)
             {
                 if (ct.IsCancellationRequested) throw new OperationCanceledException(ex.Message, ex, ct);
-                
-                lastException = ex;
-                Log.Warning("[BufferedStream] CORRUPTION DETECTED: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}: {Message}",
-                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, ex.Message);
 
-                // Will retry on next iteration
+                lastException = ex;
+
+                // Track which provider failed so we exclude it on retry
+                var failedProviderIndex = baseDetails?.CurrentProviderIndex;
+                if (failedProviderIndex.HasValue)
+                {
+                    excludedProviders.Add(failedProviderIndex.Value);
+                }
+
+                Log.Warning("[BufferedStream] CORRUPTION DETECTED: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, FailedProvider={FailedProvider}: {Message}",
+                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, failedProviderIndex?.ToString() ?? "unknown", ex.Message);
+
+                // Will retry on next iteration with failed provider excluded
             }
             catch (UsenetArticleNotFoundException ex)
             {
@@ -894,9 +986,17 @@ public class BufferedSegmentStream : Stream
                 if (ct.IsCancellationRequested) throw new OperationCanceledException(ex.Message, ex, ct);
 
                 lastException = ex;
-                Log.Warning("[BufferedStream] ERROR FETCHING SEGMENT: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}: {Message}",
-                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, ex.Message);
-                // Will retry on next iteration
+
+                // Track which provider failed so we exclude it on retry
+                var failedProviderIndex = baseDetails?.CurrentProviderIndex;
+                if (failedProviderIndex.HasValue)
+                {
+                    excludedProviders.Add(failedProviderIndex.Value);
+                }
+
+                Log.Warning("[BufferedStream] ERROR FETCHING SEGMENT: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, FailedProvider={FailedProvider}: {Message}",
+                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, failedProviderIndex?.ToString() ?? "unknown", ex.Message);
+                // Will retry on next iteration with failed provider excluded
             }
             finally
             {
@@ -952,9 +1052,21 @@ public class BufferedSegmentStream : Stream
         }
         else
         {
+            // Clean up provider exclusions before throwing
+            if (baseDetails != null)
+            {
+                baseDetails.ExcludedProviderIndices = null;
+            }
+
             // If we don't know the exact size, we cannot safely zero-fill without corrupting the file structure (shifting offsets).
             // It is safer to fail hard here.
             throw new InvalidDataException($"Cannot perform graceful degradation for segment {index} ({segmentId}) because segment size is unknown. Failing stream to prevent structural corruption.");
+        }
+
+        // Clean up provider exclusions before returning
+        if (baseDetails != null)
+        {
+            baseDetails.ExcludedProviderIndices = null;
         }
 
         // Return a zero-filled segment of correct size

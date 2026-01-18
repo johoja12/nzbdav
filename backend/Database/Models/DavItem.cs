@@ -45,9 +45,11 @@ public class DavItem
             Path = System.IO.Path.Join(parent.Path, name),
             ReleaseDate = releaseDate,
             LastHealthCheck = lastHealthCheck,
-            NextHealthCheck = releaseDate != null && lastHealthCheck != null
+            // For new items (no lastHealthCheck), delay health check by 5 minutes to avoid immediate checks
+            // For items with health check history, use exponential backoff based on age
+            NextHealthCheck = lastHealthCheck != null && releaseDate != null
                 ? releaseDate.Value + 2 * (lastHealthCheck.Value - releaseDate.Value)
-                : null
+                : DateTimeOffset.UtcNow.AddMinutes(5)
         };
     }
 

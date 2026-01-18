@@ -6,6 +6,7 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Websocket;
@@ -76,13 +77,19 @@ public class UsenetStreamingClient
         var usageContext = token.GetContext<ConnectionUsageContext>();
         var timeoutSeconds = _configManager.GetUsenetOperationTimeout();
 
+        // Calculate total timeout to allow each provider a full attempt
+        // This ensures segment checks can failover across all providers before giving up
+        var providerConfig = _configManager.GetUsenetProviderConfig();
+        var activeProviderCount = providerConfig.Providers.Count(p => p.Type != ProviderType.Disabled);
+        var totalTimeoutSeconds = timeoutSeconds * Math.Max(1, activeProviderCount);
+
         // Optimization: Smart Analysis for uniform segment sizes
         if (useSmartAnalysis && segmentIds.Length > 2)
         {
             try
             {
                 using var fastCheckCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                fastCheckCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                fastCheckCts.CancelAfter(TimeSpan.FromSeconds(totalTimeoutSeconds));
                 using var _ = fastCheckCts.Token.SetScopedContext(usageContext);
 
                 // Check first, second (to confirm uniformity), and last segment
@@ -125,7 +132,7 @@ public class UsenetStreamingClient
             .Select(async (id, index) =>
             {
                 using var segmentCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                segmentCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                segmentCts.CancelAfter(TimeSpan.FromSeconds(totalTimeoutSeconds));
                 using var _ = segmentCts.Token.SetScopedContext(usageContext);
 
                 var header = await _client.GetSegmentYencHeaderAsync(id, segmentCts.Token).ConfigureAwait(false);
@@ -172,11 +179,16 @@ public class UsenetStreamingClient
         var usageContext = token.GetContext<ConnectionUsageContext>();
         var timeoutSeconds = _configManager.GetUsenetOperationTimeout();
 
+        // Calculate total timeout to allow each provider a full attempt
+        var providerConfig = _configManager.GetUsenetProviderConfig();
+        var activeProviderCount = providerConfig.Providers.Count(p => p.Type != ProviderType.Disabled);
+        var totalTimeoutSeconds = timeoutSeconds * Math.Max(1, activeProviderCount);
+
         var tasks = segmentIds
             .Select(async x =>
             {
                 using var segmentCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                segmentCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                segmentCts.CancelAfter(TimeSpan.FromSeconds(totalTimeoutSeconds));
                 using var _ = segmentCts.Token.SetScopedContext(usageContext);
                 try
                 {
@@ -189,7 +201,7 @@ public class UsenetStreamingClient
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested && segmentCts.IsCancellationRequested)
                 {
-                    throw new TimeoutException($"Stat timed out for segment {x}");
+                    throw new TimeoutException($"Stat timed out for segment {x} after trying all providers");
                 }
             })
             .WithConcurrencyAsync(concurrency);
@@ -466,7 +478,7 @@ public class UsenetStreamingClient
         var connectionPool = CreateNewConnectionPool(
             maxConnections: connectionDetails.MaxConnections,
             pooledSemaphore: pooledSemaphore,
-            connectionFactory: ct => CreateNewConnection(connectionDetails, _bandwidthService, providerIndex, ct),
+            connectionFactory: ct => CreateNewConnection(connectionDetails, _bandwidthService, providerIndex, operationTimeout, ct),
             onConnectionPoolChanged: connectionPoolStats.GetOnConnectionPoolChanged(providerIndex),
             connectionPoolStats: connectionPoolStats,
             providerIndex: providerIndex,
@@ -490,10 +502,11 @@ public class UsenetStreamingClient
         UsenetProviderConfig.ConnectionDetails connectionDetails,
         BandwidthService bandwidthService,
         int providerIndex,
+        int operationTimeoutSeconds,
         CancellationToken cancellationToken
     )
     {
-        var connection = new ThreadSafeNntpClient(bandwidthService, providerIndex);
+        var connection = new ThreadSafeNntpClient(bandwidthService, providerIndex, operationTimeoutSeconds);
         var host = connectionDetails.Host;
         var port = connectionDetails.Port;
         var useSsl = connectionDetails.UseSsl;
@@ -559,17 +572,17 @@ public class UsenetStreamingClient
     }
 
     /// <summary>
-    /// Gets information about all configured providers (index, host, type).
-    /// Used for displaying provider details in testing tools.
+    /// Gets information about all configured providers (index, host, type, maxConnections).
+    /// Used for displaying provider details in testing tools and benchmarks.
     /// </summary>
-    public IReadOnlyList<(int Index, string Host, string Type)> GetProviderInfo()
+    public IReadOnlyList<(int Index, string Host, string Type, int MaxConnections)> GetProviderInfo()
     {
         if (_client.InnerClient is MultiProviderNntpClient multiProvider)
         {
             return multiProvider.Providers
-                .Select(p => (p.ProviderIndex, p.Host, p.ProviderType.ToString()))
+                .Select(p => (p.ProviderIndex, p.Host, p.ProviderType.ToString(), p.ConnectionPool.MaxConnections))
                 .ToList();
         }
-        return Array.Empty<(int, string, string)>();
+        return Array.Empty<(int, string, string, int)>();
     }
 }

@@ -12,7 +12,7 @@ public class TestUsenetConnectionController() : BaseApiController
     {
         try
         {
-            await UsenetStreamingClient.CreateNewConnection(request.ToConnectionDetails(), null, -1, HttpContext.RequestAborted).ConfigureAwait(false);
+            await UsenetStreamingClient.CreateNewConnection(request.ToConnectionDetails(), null, -1, operationTimeoutSeconds: 30, HttpContext.RequestAborted).ConfigureAwait(false);
             return new TestUsenetConnectionResponse { Status = true, Connected = true };
         }
         catch (CouldNotConnectToUsenetException)

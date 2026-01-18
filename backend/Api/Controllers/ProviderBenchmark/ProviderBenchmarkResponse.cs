@@ -1,0 +1,66 @@
+namespace NzbWebDAV.Api.Controllers.ProviderBenchmark;
+
+public class ProviderBenchmarkRequest
+{
+    /// <summary>
+    /// List of provider indices to test. If null or empty, tests all non-disabled providers.
+    /// </summary>
+    public List<int>? ProviderIndices { get; set; }
+
+    /// <summary>
+    /// Whether to include a load-balanced test at the end.
+    /// </summary>
+    public bool IncludeLoadBalanced { get; set; } = true;
+}
+
+public class ProviderBenchmarkResponse : BaseApiResponse
+{
+    public Guid RunId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public string? TestFileName { get; set; }
+    public long TestFileSize { get; set; }
+    public int TestSizeMb { get; set; }
+    public List<ProviderBenchmarkResultDto> Results { get; set; } = new();
+}
+
+public class ProviderBenchmarkResultDto
+{
+    public int ProviderIndex { get; set; }
+    public string ProviderHost { get; set; } = "";
+    public string ProviderType { get; set; } = "";
+    public bool IsLoadBalanced { get; set; }
+    public long BytesDownloaded { get; set; }
+    public double ElapsedSeconds { get; set; }
+    public double SpeedMbps { get; set; }
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
+public class ProviderBenchmarkHistoryResponse : BaseApiResponse
+{
+    public List<ProviderBenchmarkRunSummary> Runs { get; set; } = new();
+}
+
+public class ProviderBenchmarkRunSummary
+{
+    public Guid RunId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public string? TestFileName { get; set; }
+    public long TestFileSize { get; set; }
+    public int TestSizeMb { get; set; }
+    public List<ProviderBenchmarkResultDto> Results { get; set; } = new();
+}
+
+public class ProviderListResponse : BaseApiResponse
+{
+    public List<ProviderInfoDto> Providers { get; set; } = new();
+}
+
+public class ProviderInfoDto
+{
+    public int Index { get; set; }
+    public string Host { get; set; } = "";
+    public string Type { get; set; } = "";
+    public int MaxConnections { get; set; }
+    public bool IsDisabled { get; set; }
+}

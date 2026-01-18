@@ -4,7 +4,7 @@ import { Button } from "react-bootstrap";
 import { receiveMessage } from "~/utils/websocket-util";
 import { useToast } from "~/context/ToastContext";
 
-const usenetConnectionsTopic = {'cxs': 'state'};
+const usenetConnectionsTopic = {'cxs': 'state', 'bp': 'state'};
 
 type UsenetSettingsProps = {
     config: Record<string, string>
@@ -32,6 +32,58 @@ type ConnectionCounts = {
     live: number;
     active: number;
     max: number;
+}
+
+type BenchmarkResult = {
+    providerIndex: number;
+    providerHost: string;
+    providerType: string;
+    isLoadBalanced: boolean;
+    bytesDownloaded: number;
+    elapsedSeconds: number;
+    speedMbps: number;
+    success: boolean;
+    errorMessage?: string;
+}
+
+type BenchmarkResponse = {
+    status: boolean;
+    error?: string;
+    runId?: string;
+    createdAt?: string;
+    testFileName?: string;
+    testFileSize?: number;
+    testSizeMb?: number;
+    results: BenchmarkResult[];
+}
+
+type BenchmarkRunSummary = {
+    runId: string;
+    createdAt: string;
+    testFileName?: string;
+    testFileSize?: number;
+    testSizeMb?: number;
+    results: BenchmarkResult[];
+}
+
+type BenchmarkHistoryResponse = {
+    status: boolean;
+    error?: string;
+    runs: BenchmarkRunSummary[];
+}
+
+type ProviderInfoDto = {
+    index: number;
+    host: string;
+    type: string;
+    maxConnections: number;
+    isDisabled: boolean;
+}
+
+type ProviderListResponse = {
+    status: boolean;
+    error?: string;
+    providers: ProviderInfoDto[];
 }
 
 type UsenetProviderConfig = {
@@ -73,7 +125,17 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
     const [providerAffinityEnabled, setProviderAffinityEnabled] = useState(config["provider-affinity.enable"] !== "false");
     const [hideSamples, setHideSamples] = useState(config["usenet.hide-samples"] === "true");
     const [streamBufferSize, setStreamBufferSize] = useState(config["usenet.stream-buffer-size"] || "100");
-    const [operationTimeout, setOperationTimeout] = useState(config["usenet.operation-timeout"] || "90");
+    const [operationTimeout, setOperationTimeout] = useState(config["usenet.operation-timeout"] || "60");
+    const [isRunningBenchmark, setIsRunningBenchmark] = useState(false);
+    const [benchmarkResults, setBenchmarkResults] = useState<BenchmarkResponse | null>(null);
+    const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRunSummary[]>([]);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [historyPage, setHistoryPage] = useState(0);
+    const [showCurrentRun, setShowCurrentRun] = useState(true);
+    const historyPerPage = 1; // Show one historical run at a time
+    const [benchmarkProviders, setBenchmarkProviders] = useState<ProviderInfoDto[]>([]);
+    const [selectedProviderIndices, setSelectedProviderIndices] = useState<Set<number>>(new Set());
+    const [includeLoadBalanced, setIncludeLoadBalanced] = useState(true);
 
     // handlers
     const handleStatsEnableChange = useCallback((checked: boolean) => {
@@ -161,13 +223,121 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         }}));
     }, [setConnections]);
 
+    const handleBenchmarkMessage = useCallback((message: string) => {
+        try {
+            const data: BenchmarkResponse = JSON.parse(message);
+            if (data.status && data.results) {
+                setBenchmarkResults(data);
+                setShowCurrentRun(true);
+            }
+        } catch (error) {
+            console.error("Failed to parse benchmark message:", error);
+        }
+    }, []);
+
+    const fetchBenchmarkHistory = useCallback(async () => {
+        setIsLoadingHistory(true);
+        try {
+            const response = await fetch('/api/provider-benchmark', { method: 'GET' });
+            const data: BenchmarkHistoryResponse = await response.json();
+            if (data.status && data.runs) {
+                setBenchmarkHistory(data.runs);
+            }
+        } catch (error) {
+            console.error("Failed to fetch benchmark history:", error);
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    }, []);
+
+    const fetchBenchmarkProviders = useCallback(async () => {
+        try {
+            const response = await fetch('/api/provider-benchmark/providers', { method: 'GET' });
+            const data: ProviderListResponse = await response.json();
+            if (data.status && data.providers) {
+                setBenchmarkProviders(data.providers);
+                // By default, select all non-disabled providers
+                const activeIndices = new Set(
+                    data.providers
+                        .filter(p => !p.isDisabled)
+                        .map(p => p.index)
+                );
+                setSelectedProviderIndices(activeIndices);
+            }
+        } catch (error) {
+            console.error("Failed to fetch benchmark providers:", error);
+        }
+    }, []);
+
+    const handleToggleProvider = useCallback((index: number) => {
+        setSelectedProviderIndices(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(index)) {
+                newSet.delete(index);
+            } else {
+                newSet.add(index);
+            }
+            return newSet;
+        });
+    }, []);
+
+    const handleSelectAllProviders = useCallback(() => {
+        setSelectedProviderIndices(new Set(benchmarkProviders.map(p => p.index)));
+    }, [benchmarkProviders]);
+
+    const handleDeselectAllProviders = useCallback(() => {
+        setSelectedProviderIndices(new Set());
+    }, []);
+
+    const handleRunBenchmark = useCallback(async () => {
+        if (selectedProviderIndices.size === 0) {
+            addToast("Please select at least one provider to test.", "warning", "No Providers Selected");
+            return;
+        }
+
+        setIsRunningBenchmark(true);
+        setBenchmarkResults(null);
+        addToast(`Starting provider benchmark. Testing ${selectedProviderIndices.size} provider(s)...`, "info", "Benchmark Started");
+
+        try {
+            const response = await fetch('/api/provider-benchmark', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    providerIndices: Array.from(selectedProviderIndices),
+                    includeLoadBalanced: includeLoadBalanced && selectedProviderIndices.size > 1
+                })
+            });
+            const data = await response.json();
+
+            if (data.status) {
+                setBenchmarkResults(data);
+                // Refresh history to include new result
+                fetchBenchmarkHistory();
+                addToast("Provider benchmark completed successfully.", "success", "Benchmark Complete");
+            } else {
+                addToast(data.error || "Benchmark failed", "danger", "Error");
+            }
+        } catch (error) {
+            addToast("Network error during benchmark: " + error, "danger", "Error");
+        } finally {
+            setIsRunningBenchmark(false);
+        }
+    }, [addToast, fetchBenchmarkHistory, selectedProviderIndices, includeLoadBalanced]);
+
     // effects
     useEffect(() => {
         let ws: WebSocket;
         let disposed = false;
         function connect() {
             ws = new WebSocket(window.location.origin.replace(/^http/, 'ws'));
-            ws.onmessage = receiveMessage((_, message) => handleConnectionsMessage(message));
+            ws.onmessage = receiveMessage((topic, message) => {
+                if (topic === 'cxs') {
+                    handleConnectionsMessage(message);
+                } else if (topic === 'bp') {
+                    handleBenchmarkMessage(message);
+                }
+            });
             ws.onopen = () => ws.send(JSON.stringify(usenetConnectionsTopic));
             ws.onerror = () => { ws.close() };
             ws.onclose = onClose;
@@ -178,7 +348,15 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             setConnections({});
         }
         return connect();
-    }, [setConnections, handleConnectionsMessage]);
+    }, [setConnections, handleConnectionsMessage, handleBenchmarkMessage]);
+
+    // Fetch benchmark history on mount when providers are configured
+    useEffect(() => {
+        if (providerConfig.Providers.length > 0) {
+            fetchBenchmarkHistory();
+            fetchBenchmarkProviders();
+        }
+    }, [providerConfig.Providers.length, fetchBenchmarkHistory, fetchBenchmarkProviders]);
 
     // view
     return (
@@ -320,13 +498,14 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                         type="text"
                         id="operation-timeout"
                         className={`${styles["form-input"]} ${!isPositiveInteger(operationTimeout) ? styles.error : ""}`}
-                        placeholder="90"
+                        placeholder="60"
                         value={operationTimeout}
                         onChange={(e) => handleOperationTimeoutChange(e.target.value)}
                         style={{ maxWidth: '200px' }}
                     />
                     <div>
-                        Maximum time to wait for a Usenet response (including connection acquisition). Increase if you see frequent timeouts. (Default: 90)
+                        Maximum time to wait for segment data from Usenet providers. This affects per-read timeouts during streaming.
+                        If you see "Incomplete segment" errors or corruption warnings, increase this value. (Default: 60)
                     </div>
                 </div>
             </div>
@@ -470,6 +649,254 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 )}
             </div>
 
+            {providerConfig.Providers.length > 0 && (
+                <div className={styles.section}>
+                    <div className={styles.sectionHeader}>
+                        <div>Provider Benchmark</div>
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={handleRunBenchmark}
+                            disabled={isRunningBenchmark}
+                        >
+                            {isRunningBenchmark ? "Running..." : "Run Benchmark"}
+                        </Button>
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--bs-secondary-color)', marginBottom: '12px' }}>
+                        Tests download speed by fetching 300MB from each selected provider individually.
+                        Picks a random file (1GB+) from your library. This will consume bandwidth.
+                    </div>
+
+                    {/* Provider Selection */}
+                    {benchmarkProviders.length > 0 && !isRunningBenchmark && (
+                        <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: 'var(--bs-tertiary-bg)', borderRadius: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <div style={{ fontWeight: 500, fontSize: '0.9rem' }}>Select Providers to Test</div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <Button variant="outline-secondary" size="sm" onClick={handleSelectAllProviders}>
+                                        Select All
+                                    </Button>
+                                    <Button variant="outline-secondary" size="sm" onClick={handleDeselectAllProviders}>
+                                        Deselect All
+                                    </Button>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                {benchmarkProviders.map((provider) => (
+                                    <label
+                                        key={provider.index}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            padding: '6px 10px',
+                                            backgroundColor: selectedProviderIndices.has(provider.index) ? 'var(--bs-primary-bg-subtle)' : 'var(--bs-body-bg)',
+                                            border: `1px solid ${selectedProviderIndices.has(provider.index) ? 'var(--bs-primary)' : 'var(--bs-border-color)'}`,
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '0.85rem',
+                                            opacity: provider.isDisabled ? 0.7 : 1
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedProviderIndices.has(provider.index)}
+                                            onChange={() => handleToggleProvider(provider.index)}
+                                            style={{ margin: 0 }}
+                                        />
+                                        <span>{provider.host}</span>
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--bs-secondary-color)' }}>
+                                            ({provider.type})
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                            {selectedProviderIndices.size > 1 && (
+                                <div style={{ marginTop: '10px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={includeLoadBalanced}
+                                            onChange={(e) => setIncludeLoadBalanced(e.target.checked)}
+                                        />
+                                        <span>Include load-balanced test (tests all selected providers combined)</span>
+                                    </label>
+                                </div>
+                            )}
+                            <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--bs-secondary-color)' }}>
+                                {selectedProviderIndices.size} provider{selectedProviderIndices.size !== 1 ? 's' : ''} selected
+                            </div>
+                        </div>
+                    )}
+
+                    {isRunningBenchmark && (
+                        <div className={`${styles.alert} ${styles["alert-info"]}`}>
+                            Running benchmark... This may take a few minutes. Results will appear when complete.
+                        </div>
+                    )}
+
+                    {/* Unified Benchmark Results View with Pagination */}
+                    {(() => {
+                        // Determine what to show: current run or historical
+                        const totalRuns = benchmarkHistory.length + (benchmarkResults ? 1 : 0);
+                        const currentRunData = showCurrentRun && benchmarkResults
+                            ? {
+                                runId: benchmarkResults.runId || 'current',
+                                createdAt: benchmarkResults.createdAt || new Date().toISOString(),
+                                testFileName: benchmarkResults.testFileName,
+                                testFileSize: benchmarkResults.testFileSize,
+                                testSizeMb: benchmarkResults.testSizeMb,
+                                results: benchmarkResults.results,
+                                isCurrent: true
+                            }
+                            : null;
+
+                        const historyRunData = !showCurrentRun && benchmarkHistory[historyPage]
+                            ? { ...benchmarkHistory[historyPage], isCurrent: false }
+                            : null;
+
+                        const displayRun = currentRunData || historyRunData;
+
+                        if (!displayRun && !isLoadingHistory && totalRuns === 0) {
+                            return (
+                                <div style={{ color: 'var(--bs-secondary-color)', fontSize: '0.9rem', fontStyle: 'italic' }}>
+                                    No benchmark results yet. Click "Run Benchmark" to test your providers.
+                                </div>
+                            );
+                        }
+
+                        if (isLoadingHistory) {
+                            return (
+                                <div style={{ color: 'var(--bs-secondary-color)', fontSize: '0.85rem' }}>
+                                    Loading benchmark history...
+                                </div>
+                            );
+                        }
+
+                        if (!displayRun) return null;
+
+                        return (
+                            <div>
+                                {/* Navigation Controls */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                        <Button
+                                            variant="outline-secondary"
+                                            size="sm"
+                                            disabled={showCurrentRun && !benchmarkResults}
+                                            onClick={() => {
+                                                if (!showCurrentRun && historyPage > 0) {
+                                                    setHistoryPage(historyPage - 1);
+                                                } else if (!showCurrentRun && historyPage === 0 && benchmarkResults) {
+                                                    setShowCurrentRun(true);
+                                                }
+                                            }}
+                                            style={{ padding: '2px 8px' }}
+                                        >
+                                            &larr; Newer
+                                        </Button>
+                                        <span style={{ fontSize: '0.85rem', color: 'var(--bs-secondary-color)' }}>
+                                            {showCurrentRun
+                                                ? `Latest Run${benchmarkHistory.length > 0 ? ` (1 of ${totalRuns})` : ''}`
+                                                : `Run ${historyPage + (benchmarkResults ? 2 : 1)} of ${totalRuns}`
+                                            }
+                                        </span>
+                                        <Button
+                                            variant="outline-secondary"
+                                            size="sm"
+                                            disabled={!showCurrentRun && historyPage >= benchmarkHistory.length - 1}
+                                            onClick={() => {
+                                                if (showCurrentRun && benchmarkHistory.length > 0) {
+                                                    setShowCurrentRun(false);
+                                                    setHistoryPage(0);
+                                                } else if (!showCurrentRun && historyPage < benchmarkHistory.length - 1) {
+                                                    setHistoryPage(historyPage + 1);
+                                                }
+                                            }}
+                                            style={{ padding: '2px 8px' }}
+                                        >
+                                            Older &rarr;
+                                        </Button>
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: 'var(--bs-secondary-color)' }}>
+                                        {displayRun.isCurrent ? 'Just now' : new Date(displayRun.createdAt).toLocaleString()}
+                                    </div>
+                                </div>
+
+                                {/* Results Table */}
+                                <div className={styles["benchmark-results"]}>
+                                    <div style={{ fontSize: '0.9rem', marginBottom: '8px' }}>
+                                        <strong>Test File:</strong> {displayRun.testFileName}
+                                        <span style={{ color: 'var(--bs-secondary-color)', marginLeft: '8px' }}>
+                                            ({(displayRun.testFileSize || 0) / 1024 / 1024 / 1024 > 1
+                                                ? `${((displayRun.testFileSize || 0) / 1024 / 1024 / 1024).toFixed(2)} GB`
+                                                : `${((displayRun.testFileSize || 0) / 1024 / 1024).toFixed(0)} MB`
+                                            })
+                                        </span>
+                                    </div>
+                                    <table className={styles["benchmark-table"]}>
+                                        <thead>
+                                            <tr>
+                                                <th>Provider</th>
+                                                <th>Speed</th>
+                                                <th>Downloaded</th>
+                                                <th>Time</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {displayRun.results.map((result, idx) => (
+                                                <tr key={idx} className={result.isLoadBalanced ? styles["benchmark-highlight"] : ""}>
+                                                    <td>
+                                                        {result.isLoadBalanced ? (
+                                                            <strong>{result.providerHost}</strong>
+                                                        ) : (
+                                                            result.providerHost
+                                                        )}
+                                                    </td>
+                                                    <td className={styles["benchmark-speed"]}>
+                                                        {result.success
+                                                            ? `${result.speedMbps.toFixed(2)} MB/s`
+                                                            : "-"
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        {result.success
+                                                            ? `${(result.bytesDownloaded / 1024 / 1024).toFixed(1)} MB`
+                                                            : "-"
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        {result.success
+                                                            ? `${result.elapsedSeconds.toFixed(1)}s`
+                                                            : "-"
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        {result.success ? (
+                                                            <span style={{ color: 'var(--bs-success)' }}>OK</span>
+                                                        ) : (
+                                                            <div>
+                                                                <span style={{ color: 'var(--bs-danger)' }}>Failed</span>
+                                                                {result.errorMessage && (
+                                                                    <div style={{ fontSize: '0.75rem', color: 'var(--bs-secondary-color)', maxWidth: '200px' }}>
+                                                                        {result.errorMessage}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        );
+                    })()}
+                </div>
+            )}
+
             <ProviderModal
                 show={showModal}
                 provider={editingIndex !== null ? providerConfig.Providers[editingIndex] : null}
@@ -500,11 +927,6 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
     const [connectionTested, setConnectionTested] = useState(false);
     const [testError, setTestError] = useState<string | null>(null);
 
-    const [isTestingThroughput, setIsTestingThroughput] = useState(false);
-    const [throughputResult, setThroughputResult] = useState<string | null>(null);
-    const [throughputError, setThroughputError] = useState<string | null>(null);
-    const [testNzbFile, setTestNzbFile] = useState<File | null>(null);
-
     // Reset form when modal opens or provider changes
     useEffect(() => {
         if (show) {
@@ -517,9 +939,6 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
             setType(provider?.Type ?? ProviderType.Pooled);
             setConnectionTested(false);
             setTestError(null);
-            setThroughputResult(null);
-            setThroughputError(null);
-            setTestNzbFile(null);
         }
     }, [show, provider]);
 
@@ -540,8 +959,6 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
     const handleTestConnection = useCallback(async () => {
         setIsTestingConnection(true);
         setTestError(null);
-        setThroughputResult(null);
-        setThroughputError(null);
 
         try {
             const formData = new FormData();
@@ -573,46 +990,6 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
             setIsTestingConnection(false);
         }
     }, [host, port, useSsl, user, pass]);
-
-    const handleTestThroughput = useCallback(async () => {
-        if (!testNzbFile) {
-            setThroughputError("Please select an NZB file for testing");
-            return;
-        }
-
-        setIsTestingThroughput(true);
-        setThroughputError(null);
-        setThroughputResult(null);
-
-        try {
-            const formData = new FormData();
-            formData.append('host', host);
-            formData.append('port', port);
-            formData.append('use-ssl', useSsl.toString());
-            formData.append('user', user);
-            formData.append('pass', pass);
-            formData.append('max-connections', maxConnections);
-            formData.append('nzbFile', testNzbFile);
-
-            const response = await fetch('/api/test-usenet-throughput', {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success) {
-                    setThroughputResult(`${data.speedInMBps} MB/s - ${data.message}`);
-                }
-            } else {
-                setThroughputError("Failed to test throughput");
-            }
-        } catch (error) {
-            setThroughputError("Network error: " + (error instanceof Error ? error.message : "Unknown error"));
-        } finally {
-            setIsTestingThroughput(false);
-        }
-    }, [host, port, useSsl, user, pass, maxConnections, testNzbFile]);
 
     const handleSave = useCallback(() => {
         onSave({
@@ -771,19 +1148,6 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
                                 </label>
                             </div>
                         </div>
-
-                        <div className={`${styles["form-group"]} ${styles["full-width"]}`}>
-                            <label htmlFor="test-nzb-file" className={styles["form-label"]}>
-                                Speed Test NZB (Optional)
-                            </label>
-                            <input
-                                type="file"
-                                id="test-nzb-file"
-                                accept=".nzb"
-                                className={styles["form-input"]}
-                                onChange={(e) => setTestNzbFile(e.target.files?.[0] || null)}
-                            />
-                        </div>
                     </div>
 
                     {testError && (
@@ -792,37 +1156,14 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
                         </div>
                     )}
 
-                    {throughputError && (
-                        <div className={`${styles.alert} ${styles["alert-danger"]}`} style={{ marginTop: '16px' }}>
-                            {throughputError}
-                        </div>
-                    )}
-
                     {connectionTested && (
                         <div className={`${styles.alert} ${styles["alert-success"]}`} style={{ marginTop: '16px' }}>
                             Connection test successful!
                         </div>
                     )}
-
-                    {throughputResult && (
-                        <div className={`${styles.alert} ${styles["alert-success"]}`} style={{ marginTop: '16px' }}>
-                            <strong>Speed Test:</strong> {throughputResult}
-                        </div>
-                    )}
                 </div>
 
                 <div className={styles["modal-footer"]}>
-                    <div className={styles["modal-footer-left"]}>
-                        <Button 
-                            variant="outline-primary" 
-                            size="sm"
-                            onClick={handleTestThroughput}
-                            disabled={!isFormValid || isTestingThroughput || isTestingConnection}
-                        >
-                            {isTestingThroughput ? "Testing Speed..." : "Test Speed"}
-                        </Button>
-                    </div>
-                    <div className={styles["modal-footer-right"]}>
                         <Button variant="secondary" onClick={onClose}>
                             Cancel
                         </Button>
@@ -839,7 +1180,6 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
                                 Save Provider
                             </Button>
                         )}
-                    </div>
                 </div>
             </div>
         </div>
