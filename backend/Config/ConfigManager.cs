@@ -421,6 +421,48 @@ public class ConfigManager
         return GetConfigValue<RcloneRcConfig>("rclone.rc") ?? defaultValue;
     }
 
+    // ============================================
+    // Arr Path Mappings (per-instance)
+    // ============================================
+
+    /// <summary>
+    /// Get path mappings for a specific Arr instance.
+    /// </summary>
+    /// <param name="instanceHost">The host URL of the Arr instance</param>
+    public ArrPathMappings GetArrPathMappings(string instanceHost)
+    {
+        var key = GetPathMappingKey(instanceHost);
+        return GetConfigValue<ArrPathMappings>(key) ?? new ArrPathMappings();
+    }
+
+    /// <summary>
+    /// Get path mappings for all configured Arr instances.
+    /// </summary>
+    public Dictionary<string, ArrPathMappings> GetAllArrPathMappings()
+    {
+        var result = new Dictionary<string, ArrPathMappings>();
+        var arrConfig = GetArrConfig();
+        foreach (var instance in arrConfig.SonarrInstances)
+            result[instance.Host] = GetArrPathMappings(instance.Host);
+        foreach (var instance in arrConfig.RadarrInstances)
+            result[instance.Host] = GetArrPathMappings(instance.Host);
+        return result;
+    }
+
+    /// <summary>
+    /// Generate a config key for path mappings based on instance host.
+    /// </summary>
+    private static string GetPathMappingKey(string instanceHost)
+    {
+        var normalized = instanceHost
+            .Replace("http://", "")
+            .Replace("https://", "")
+            .Replace(":", "-")
+            .Replace("/", "")
+            .ToLowerInvariant();
+        return $"arr.path-mappings.{normalized}";
+    }
+
     public class ConfigEventArgs : EventArgs
     {
         public Dictionary<string, string> ChangedConfig { get; set; } = new();

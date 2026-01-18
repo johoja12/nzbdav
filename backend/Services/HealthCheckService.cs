@@ -656,7 +656,7 @@ public class HealthCheckService
             // then we must find the corresponding arr instance and trigger a new search.
             var linkType = symlinkOrStrmPath.ToLower().EndsWith("strm") ? "strm-file" : "symlink";
 
-            foreach (var arrClient in _configManager.GetArrConfig().GetArrClients())
+            foreach (var arrClient in _configManager.GetArrConfig().GetArrClients(_configManager.GetArrPathMappings))
             {
                 var rootFolders = await arrClient.GetRootFolders().ConfigureAwait(false);
                 if (!rootFolders.Any(x => symlinkOrStrmPath.StartsWith(x.Path!)))
