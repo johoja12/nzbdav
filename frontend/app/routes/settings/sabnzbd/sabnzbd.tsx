@@ -1,6 +1,6 @@
-import { Button, Form, InputGroup } from "react-bootstrap";
+import { Button, Form, InputGroup, Spinner } from "react-bootstrap";
 import styles from "./sabnzbd.module.css"
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
 import { className } from "~/utils/styling";
 import { isPositiveInteger } from "../usenet/usenet";
 
@@ -9,7 +9,96 @@ type SabnzbdSettingsProps = {
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
 };
 
+interface SabServer {
+    name: string;
+    url: string;
+    apiKey: string;
+    enabled: boolean;
+}
+
+type ConnectionState = 'idle' | 'testing' | 'success' | 'error';
+
 export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
+    // Check if Plex is configured (required for auto-pause)
+    const plexServersConfigured = (() => {
+        try {
+            const servers = JSON.parse(config["plex.servers"] || "[]");
+            return Array.isArray(servers) && servers.length > 0;
+        } catch {
+            return false;
+        }
+    })();
+
+    // External SABnzbd servers for auto-pause (only enabled if Plex is configured)
+    const sabAutoPause = plexServersConfigured && config["sab.auto-pause"] === "true";
+    const sabServers: SabServer[] = (() => {
+        try {
+            const servers = JSON.parse(config["sab.servers"] || "[]");
+            if (servers.length > 0) return servers;
+        } catch {}
+        // Fall back to legacy single-server config
+        const legacyUrl = config["sab.url"] || "";
+        const legacyApiKey = config["sab.api-key"] || "";
+        if (legacyUrl || legacyApiKey) {
+            return [{ name: "SABnzbd", url: legacyUrl, apiKey: legacyApiKey, enabled: true }];
+        }
+        return [];
+    })();
+
+    const [sabTestStates, setSabTestStates] = useState<Record<number, ConnectionState>>({});
+
+    const updateSabServers = useCallback((servers: SabServer[]) => {
+        setNewConfig(prev => ({
+            ...prev,
+            "sab.servers": JSON.stringify(servers),
+            "sab.url": "",
+            "sab.api-key": ""
+        }));
+    }, [setNewConfig]);
+
+    const addSabServer = useCallback(() => {
+        updateSabServers([
+            ...sabServers,
+            { name: "", url: "", apiKey: "", enabled: true }
+        ]);
+    }, [sabServers, updateSabServers]);
+
+    const removeSabServer = useCallback((index: number) => {
+        updateSabServers(sabServers.filter((_, i) => i !== index));
+    }, [sabServers, updateSabServers]);
+
+    const updateSabServer = useCallback((index: number, field: keyof SabServer, value: string | boolean) => {
+        updateSabServers(
+            sabServers.map((server, i) =>
+                i === index ? { ...server, [field]: value } : server
+            )
+        );
+    }, [sabServers, updateSabServers]);
+
+    const testSabConnection = useCallback(async (index: number, url: string, apiKey: string) => {
+        if (!url.trim() || !apiKey.trim()) return;
+
+        setSabTestStates(prev => ({ ...prev, [index]: 'testing' }));
+
+        try {
+            const formData = new FormData();
+            formData.append('url', url);
+            formData.append('apiKey', apiKey);
+
+            const response = await fetch('/api/test-sab-connection', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            setSabTestStates(prev => ({
+                ...prev,
+                [index]: result.status && result.connected ? 'success' : 'error'
+            }));
+        } catch {
+            setSabTestStates(prev => ({ ...prev, [index]: 'error' }));
+        }
+    }, []);
 
     const onRefreshApiKey = useCallback(() => {
         setNewConfig({ ...config, "api.key": generateNewApiKey() })
@@ -229,6 +318,109 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                     <a href="https://github.com/Sonarr/Sonarr/issues/5452">See here</a>.
                 </Form.Text>
             </Form.Group>
+
+            {/* Auto-Pause External SABnzbd Section */}
+            <hr />
+            <h5 className={styles.sectionTitle}>Auto-Pause External SABnzbd</h5>
+            <Form.Group>
+                <Form.Check
+                    className={styles.input}
+                    type="switch"
+                    id="sab-auto-pause-checkbox"
+                    aria-describedby="sab-auto-pause-help"
+                    label="Pause external SABnzbd during media playback"
+                    checked={sabAutoPause}
+                    disabled={!plexServersConfigured}
+                    onChange={e => setNewConfig({ ...config, "sab.auto-pause": "" + e.target.checked })} />
+                <Form.Text id="sab-auto-pause-help" muted>
+                    {plexServersConfigured ? (
+                        "Automatically pause configured SABnzbd servers when verified Plex playback is detected."
+                    ) : (
+                        "Configure Plex servers in the Integrations tab to enable this feature."
+                    )}
+                </Form.Text>
+            </Form.Group>
+
+            {sabAutoPause && (
+                <div className={styles.sabServersSection}>
+                    <div className={styles.sabServersHeader}>
+                        <span>SABnzbd Servers to Pause</span>
+                        <Button variant="outline-secondary" size="sm" onClick={addSabServer}>
+                            + Add Server
+                        </Button>
+                    </div>
+
+                    {sabServers.map((server, index) => (
+                        <div key={index} className={styles.sabServerCard}>
+                            <button
+                                className={styles.closeButton}
+                                onClick={() => removeSabServer(index)}
+                                title="Remove server"
+                                type="button"
+                            >
+                                &times;
+                            </button>
+
+                            <Form.Control
+                                className={styles.sabServerInput}
+                                type="text"
+                                placeholder="Server Name (e.g., NAS01 SABnzbd)"
+                                value={server.name}
+                                onChange={(e) => updateSabServer(index, 'name', e.target.value)}
+                            />
+
+                            <Form.Control
+                                className={styles.sabServerInput}
+                                type="text"
+                                placeholder="URL (e.g., http://192.168.1.100:8080)"
+                                value={server.url}
+                                onChange={(e) => updateSabServer(index, 'url', e.target.value)}
+                            />
+
+                            <InputGroup className={styles.sabServerInput}>
+                                <Form.Control
+                                    type="password"
+                                    placeholder="SABnzbd API Key"
+                                    value={server.apiKey}
+                                    onChange={(e) => updateSabServer(index, 'apiKey', e.target.value)}
+                                />
+                                <Button
+                                    variant={
+                                        sabTestStates[index] === 'success' ? 'success' :
+                                        sabTestStates[index] === 'error' ? 'danger' : 'secondary'
+                                    }
+                                    onClick={() => testSabConnection(index, server.url, server.apiKey)}
+                                    disabled={sabTestStates[index] === 'testing'}
+                                >
+                                    {sabTestStates[index] === 'testing' ? (
+                                        <Spinner animation="border" size="sm" />
+                                    ) : sabTestStates[index] === 'success' ? (
+                                        "OK"
+                                    ) : sabTestStates[index] === 'error' ? (
+                                        "Fail"
+                                    ) : (
+                                        "Test"
+                                    )}
+                                </Button>
+                            </InputGroup>
+
+                            <Form.Check
+                                type="switch"
+                                id={`sab-server-enabled-${index}`}
+                                label="Enabled"
+                                checked={server.enabled}
+                                onChange={(e) => updateSabServer(index, 'enabled', e.target.checked)}
+                            />
+                        </div>
+                    ))}
+
+                    {sabServers.length === 0 && (
+                        <Form.Text muted className="d-block mt-2">
+                            No SABnzbd servers configured. Add a server to enable auto-pause.
+                        </Form.Text>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -248,6 +440,10 @@ export function isSabnzbdSettingsUpdated(config: Record<string, string>, newConf
         || config["api.completed-downloads-dir"] !== newConfig["api.completed-downloads-dir"]
         || config["general.base-url"] !== newConfig["general.base-url"]
         || config["api.history-retention-hours"] !== newConfig["api.history-retention-hours"]
+        || config["sab.auto-pause"] !== newConfig["sab.auto-pause"]
+        || config["sab.servers"] !== newConfig["sab.servers"]
+        || config["sab.url"] !== newConfig["sab.url"]
+        || config["sab.api-key"] !== newConfig["sab.api-key"]
 }
 
 export function isSabnzbdSettingsValid(newConfig: Record<string, string>) {

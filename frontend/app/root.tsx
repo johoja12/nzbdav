@@ -43,6 +43,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     useLayout: true,
     version: process.env.NZBDAV_VERSION,
+    buildDate: process.env.NZBDAV_BUILD_DATE,
+    gitBranch: process.env.NZBDAV_GIT_BRANCH,
+    gitCommit: process.env.NZBDAV_GIT_COMMIT,
+    gitRemote: process.env.NZBDAV_GIT_REMOTE,
+    gitUpstream: process.env.NZBDAV_GIT_UPSTREAM,
+    upstreamDate: process.env.NZBDAV_UPSTREAM_DATE,
+    originalDate: process.env.NZBDAV_ORIGINAL_DATE,
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
     statsEnabled: statsEnabled
   };
@@ -69,7 +76,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
-  const { useLayout, version, isFrontendAuthDisabled, statsEnabled } = loaderData;
+  const { useLayout, version, buildDate, gitBranch, gitCommit, gitRemote, gitUpstream, upstreamDate, originalDate, isFrontendAuthDisabled, statsEnabled } = loaderData;
   const location = useLocation();
   const navigation = useNavigation();
   const isNavigating = Boolean(navigation.location);
@@ -90,6 +97,13 @@ export default function App({ loaderData }: Route.ComponentProps) {
             leftNavChild={
               <LeftNavigation
                 version={version}
+                buildDate={buildDate}
+                gitBranch={gitBranch}
+                gitCommit={gitCommit}
+                gitRemote={gitRemote}
+                gitUpstream={gitUpstream}
+                upstreamDate={upstreamDate}
+                originalDate={originalDate}
                 isFrontendAuthDisabled={isFrontendAuthDisabled}
                 statsEnabled={statsEnabled} />
             } />

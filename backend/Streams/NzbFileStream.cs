@@ -2,6 +2,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
+using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Streams;
@@ -283,8 +284,26 @@ public class NzbFileStream : Stream
                 BaseByteOffset = totalBaseOffset,  // Starting offset for this partial stream in the combined file
                 ForcedProviderIndex = _usageContext.DetailsObject?.ForcedProviderIndex  // Preserve forced provider for benchmarks
             };
+
+            // Check if this file is in an active Plex session (real playback vs background activity)
+            // Extract the folder name from path (e.g., /content/movies/Movie.Name.2025.../obfuscated.mkv -> Movie.Name.2025...)
+            // This is needed because NZB files often have obfuscated filenames but proper folder names
+            string? fileName = null;
+            var fullPath = _usageContext.Details;
+            if (!string.IsNullOrEmpty(fullPath))
+            {
+                var pathParts = fullPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (pathParts.Length >= 3 && pathParts[0] == "content")
+                {
+                    fileName = pathParts[2]; // The job/folder name (e.g., "Movie.Name.2025.WEB-DL...")
+                }
+            }
+            fileName ??= _usageContext.DetailsObject?.JobName ?? _usageContext.Details;
+            var isRealPlayback = PlexVerificationService.Instance?.IsFilePlaying(fileName) ?? true;
+            var usageType = isRealPlayback ? ConnectionUsageType.PlexPlayback : ConnectionUsageType.PlexBackground;
+
             var bufferedContext = new ConnectionUsageContext(
-                ConnectionUsageType.BufferedStreaming,
+                usageType,
                 detailsObj
             );
             

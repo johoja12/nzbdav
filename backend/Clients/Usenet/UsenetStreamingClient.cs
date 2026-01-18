@@ -25,6 +25,7 @@ public class UsenetStreamingClient
     private readonly ProviderErrorService _providerErrorService;
     private readonly NzbProviderAffinityService _affinityService;
     private ConnectionPoolStats? _connectionPoolStats;
+    public ConnectionPoolStats? ConnectionPoolStats => _connectionPoolStats;
 
     // Track recent GetFileSizeAsync operation times for dynamic timeout calculation
     private readonly Queue<double> _recentFileSizeOperationTimes = new();

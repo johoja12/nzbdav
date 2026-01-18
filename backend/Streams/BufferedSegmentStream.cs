@@ -98,6 +98,7 @@ public class BufferedSegmentStream : Stream
 
     private int _nextIndexToRead = 0;
     private int _maxFetchedIndex = -1;
+    private readonly ConnectionUsageType _streamType; // Tracks the type for priority: PlexPlayback > PlexBackground > BufferedStreaming
     private readonly int _totalSegments;
 
     public int BufferedCount => _bufferedCount;
@@ -259,6 +260,11 @@ public class BufferedSegmentStream : Stream
 
         Length = fileSize;
         _totalSegments = segmentIds.Length;
+
+        // Register stream with connection limiter for provider affinity priority tracking
+        // Priority order: PlexPlayback > PlexBackground > BufferedStreaming
+        _streamType = usageContext?.UsageType ?? ConnectionUsageType.BufferedStreaming;
+        StreamingConnectionLimiter.Instance?.RegisterStream(_streamType);
     }
 
     private void UpdateUsageContext()
@@ -1213,11 +1219,14 @@ public class BufferedSegmentStream : Stream
         if (_disposed) return;
         if (disposing)
         {
+            // Unregister stream from connection limiter
+            StreamingConnectionLimiter.Instance?.UnregisterStream(_streamType);
+
             _cts.Cancel();
             _cts.Dispose();
             _bufferChannel.Writer.TryComplete();
             try { _fetchTask.Wait(TimeSpan.FromSeconds(5)); } catch { }
-            
+
             _currentSegment?.Dispose();
             _currentSegment = null;
 
@@ -1234,6 +1243,9 @@ public class BufferedSegmentStream : Stream
     public override async ValueTask DisposeAsync()
     {
         if (_disposed) return;
+
+        // Unregister stream from connection limiter
+        StreamingConnectionLimiter.Instance?.UnregisterStream(_streamType);
 
         _cts.Cancel();
         _bufferChannel.Writer.TryComplete();

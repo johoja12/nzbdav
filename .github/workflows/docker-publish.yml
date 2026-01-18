@@ -32,7 +32,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
 
-      - name: Set tags and NZBDAV_VERSION
+      - name: Set tags and build variables
         id: set_vars
         run: |
           MAJOR=0
@@ -60,6 +60,12 @@ jobs:
             echo "TAGS=${GHCR_REPO}:${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
+          # Build info variables
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "GIT_BRANCH=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "GIT_COMMIT=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "GIT_REMOTE=${{ github.server_url }}/${{ github.repository }}" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image (amd64 + arm64)
         uses: docker/build-push-action@v5
         with:
@@ -69,3 +75,7 @@ jobs:
           tags: ${{ steps.set_vars.outputs.TAGS }}
           build-args: |
             NZBDAV_VERSION=${{ steps.set_vars.outputs.NZBDAV_VERSION }}
+            NZBDAV_BUILD_DATE=${{ steps.set_vars.outputs.BUILD_DATE }}
+            NZBDAV_GIT_BRANCH=${{ steps.set_vars.outputs.GIT_BRANCH }}
+            NZBDAV_GIT_COMMIT=${{ steps.set_vars.outputs.GIT_COMMIT }}
+            NZBDAV_GIT_REMOTE=${{ steps.set_vars.outputs.GIT_REMOTE }}

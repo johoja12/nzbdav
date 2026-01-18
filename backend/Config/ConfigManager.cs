@@ -37,7 +37,7 @@ public class ConfigManager
     public T? GetConfigValue<T>(string configName)
     {
         var rawValue = StringUtil.EmptyToNull(GetConfigValue(configName));
-        return rawValue == null ? default : JsonSerializer.Deserialize<T>(rawValue);
+        return rawValue == null ? default : JsonSerializer.Deserialize<T>(rawValue, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
     }
 
     public void UpdateValues(List<ConfigItem> configItems)
@@ -413,6 +413,45 @@ public class ConfigManager
     public string GetBaseUrl()
     {
         return GetConfigValue("general.base-url") ?? "http://localhost:3000";
+    }
+
+    public StreamingMonitorConfig GetStreamingMonitorConfig()
+    {
+        return new StreamingMonitorConfig
+        {
+            Enabled = GetConfigValue("streaming-monitor.enabled") == "true",
+            StartDebounceSeconds = int.TryParse(GetConfigValue("streaming-monitor.start-debounce"), out var start) ? start : 2,
+            StopDebounceSeconds = int.TryParse(GetConfigValue("streaming-monitor.stop-debounce"), out var stop) ? stop : 5
+        };
+    }
+
+    public PlexConfig GetPlexConfig()
+    {
+        return new PlexConfig
+        {
+            VerifyPlayback = GetConfigValue("plex.verify-playback") != "false",
+            Servers = GetConfigValue<List<PlexServer>>("plex.servers") ?? new List<PlexServer>()
+        };
+    }
+
+    public SabPauseConfig GetSabPauseConfig()
+    {
+        return new SabPauseConfig
+        {
+            AutoPause = GetConfigValue("sab.auto-pause") != "false",
+            Servers = GetConfigValue<List<SabServer>>("sab.servers") ?? new List<SabServer>(),
+            Url = GetConfigValue("sab.url") ?? "",
+            ApiKey = GetConfigValue("sab.api-key") ?? ""
+        };
+    }
+
+    public WebhookConfig GetWebhookConfig()
+    {
+        return new WebhookConfig
+        {
+            Enabled = GetConfigValue("webhooks.enabled") == "true",
+            Endpoints = GetConfigValue<List<WebhookEndpoint>>("webhooks.endpoints") ?? new List<WebhookEndpoint>()
+        };
     }
 
     public RcloneRcConfig GetRcloneRcConfig()

@@ -101,5 +101,7 @@ public enum ConnectionUsageType
     HealthCheck = 3,
     Repair = 4,
     BufferedStreaming = 5,
-    Analysis = 6
+    Analysis = 6,
+    PlexBackground = 7,  // Background Plex activity (intro detection, thumbnails, credits)
+    PlexPlayback = 8     // Verified real Plex playback - highest priority for fastest provider
 }

@@ -62,8 +62,7 @@ If you are developing or prefer to build the image locally:
 
 ```bash
 docker build -t local/nzbdav:3 .
-```
-
+docker run --rm -it -p 3000:3000 local/nzbdav:3
 ```
 
 And if you would like to persist saved settings, attach a volume at `/config`

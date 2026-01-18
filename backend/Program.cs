@@ -10,6 +10,7 @@ using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Middleware;
 using NzbWebDAV.Middlewares;
 using NzbWebDAV.Queue;
 using NzbWebDAV.Services;
@@ -221,6 +222,10 @@ class Program
             .AddSingleton<HealthCheckService>()
             .AddSingleton<NzbAnalysisService>()
             .AddSingleton<MediaAnalysisService>()
+            .AddSingleton<PlexVerificationService>()
+            .AddSingleton<SabIntegrationService>()
+            .AddSingleton<WebhookService>()
+            .AddHostedService<StreamingMonitorService>()
             .AddSingleton<RcloneRcService>()
             .AddSingleton<StreamingConnectionLimiter>()
             .AddHostedService<DatabaseMaintenanceService>()
@@ -282,6 +287,7 @@ class Program
         app.Map("/ws", websocketManager.HandleRoute);
         app.MapControllers();
         app.UseWebdavBasicAuthentication();
+        app.UseWebDavWriteLogging();
         app.UseNWebDav();
         app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
         await app.RunAsync().ConfigureAwait(false);
