@@ -16,6 +16,8 @@ public class PlexVerificationService
 
     // Cache for active session file names (refreshed periodically)
     private HashSet<string> _activeSessionFiles = new(StringComparer.OrdinalIgnoreCase);
+    // Cache for files being accessed by background activities (intro detection, thumbnails, etc.)
+    private HashSet<string> _activeActivityFiles = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _cacheLastUpdated = DateTime.MinValue;
     private readonly object _cacheLock = new();
     private readonly TimeSpan _cacheExpiry = TimeSpan.FromSeconds(3);
@@ -63,8 +65,7 @@ public class PlexVerificationService
         if (found)
             return true;
 
-        // If cache had sessions but file wasn't found, this could be a race condition
-        // where Plex hasn't registered the new playback yet. Force an immediate refresh.
+        // If cache had sessions but file wasn't found, force an immediate refresh to double-check.
         if (hadSessions)
         {
             Log.Debug("[PlexVerify] IsFilePlaying({File}): Cache miss with {Count} active sessions, forcing refresh",
@@ -76,17 +77,17 @@ public class PlexVerificationService
             if (foundAfterRefresh)
                 return true;
 
-            // Still not found after fresh refresh - but Plex session registration can be slow.
-            // Default to PlexPlayback (true) to avoid penalizing real playback that just started.
-            // Background activity (thumbnails, intro detection) is typically short-lived anyway.
-            Log.Debug("[PlexVerify] IsFilePlaying({File}): True (not in cache but defaulting to playback - Plex may be slow to register)",
-                filename);
-            return true;
+            // File still not found after fresh refresh - there ARE active sessions but for OTHER files.
+            // This means this file is NOT being played back by a user - it's background activity
+            // (health checks, intro detection, thumbnail generation, etc.)
+            Log.Debug("[PlexVerify] IsFilePlaying({File}): False (not in any active session, {Count} other sessions playing)",
+                filename, _activeSessionFiles.Count);
+            return false;
         }
 
-        // No sessions in cache - assume real playback (safe default)
-        Log.Debug("[PlexVerify] IsFilePlaying({File}): True (no active sessions, assuming real playback)", filename);
-        return true;
+        // No sessions in cache - this is NOT playback, treat as background/buffered streaming
+        Log.Debug("[PlexVerify] IsFilePlaying({File}): False (no active Plex sessions)", filename);
+        return false;
     }
 
     /// <summary>
@@ -162,6 +163,70 @@ public class PlexVerificationService
         }
     }
 
+    /// <summary>
+    /// Check if Plex has any active sessions at all.
+    /// Used to distinguish between "no Plex activity" vs "Plex activity but not for this file".
+    /// </summary>
+    public bool HasAnyActiveSessions()
+    {
+        var config = _configManager.GetPlexConfig();
+        if (!config.VerifyPlayback || config.Servers.Count == 0)
+            return false;
+
+        RefreshCacheIfNeeded();
+
+        lock (_cacheLock)
+        {
+            return _activeSessionFiles.Count > 0;
+        }
+    }
+
+    /// <summary>
+    /// Check if a file is being accessed by a Plex background activity (not real playback).
+    /// This includes intro detection, thumbnail generation, media analysis, etc.
+    /// </summary>
+    public bool IsFileInBackgroundActivity(string? filePath)
+    {
+        if (string.IsNullOrEmpty(filePath))
+            return false;
+
+        var config = _configManager.GetPlexConfig();
+        if (!config.VerifyPlayback || config.Servers.Count == 0)
+            return false;
+
+        RefreshCacheIfNeeded();
+
+        var filename = Path.GetFileName(filePath);
+        var filenameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
+
+        lock (_cacheLock)
+        {
+            if (_activeActivityFiles.Count == 0)
+                return false;
+
+            // Check for exact match
+            if (_activeActivityFiles.Contains(filename))
+            {
+                Log.Debug("[PlexVerify] IsFileInBackgroundActivity({File}): True (exact match)", filename);
+                return true;
+            }
+
+            // Check for prefix/semantic match
+            foreach (var activityFile in _activeActivityFiles)
+            {
+                var activityWithoutExt = Path.GetFileNameWithoutExtension(activityFile);
+                if (activityWithoutExt.StartsWith(filenameWithoutExt, StringComparison.OrdinalIgnoreCase) ||
+                    filenameWithoutExt.StartsWith(activityWithoutExt, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Debug("[PlexVerify] IsFileInBackgroundActivity({File}): True (prefix match with {ActivityFile})", filename, activityFile);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
     private void RefreshCacheIfNeeded()
     {
         lock (_cacheLock)
@@ -192,39 +257,62 @@ public class PlexVerificationService
             lock (_cacheLock)
             {
                 _activeSessionFiles.Clear();
+                _activeActivityFiles.Clear();
                 _cacheLastUpdated = DateTime.UtcNow;
             }
             return;
         }
 
-        var allFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allSessionFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allActivityFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var server in enabledServers)
         {
+            // Get active playback sessions
             try
             {
                 var files = await GetServerSessionFilesAsync(server);
                 foreach (var file in files)
                 {
-                    allFiles.Add(file);
+                    allSessionFiles.Add(file);
                 }
             }
             catch (Exception ex)
             {
                 Log.Debug("[PlexVerify] Failed to get sessions from {Server}: {Error}", server.Name, ex.Message);
             }
+
+            // Get background activities (intro detection, thumbnail generation, etc.)
+            try
+            {
+                var activityFiles = await GetServerActivityFilesAsync(server);
+                foreach (var file in activityFiles)
+                {
+                    allActivityFiles.Add(file);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("[PlexVerify] Failed to get activities from {Server}: {Error}", server.Name, ex.Message);
+            }
         }
 
         lock (_cacheLock)
         {
-            _activeSessionFiles = allFiles;
+            _activeSessionFiles = allSessionFiles;
+            _activeActivityFiles = allActivityFiles;
             _cacheLastUpdated = DateTime.UtcNow;
         }
 
-        if (allFiles.Count > 0)
+        if (allSessionFiles.Count > 0)
         {
-            Log.Debug("[PlexVerify] Cache refreshed with {Count} active files: {Files}",
-                allFiles.Count, string.Join(", ", allFiles.Take(5)));
+            Log.Debug("[PlexVerify] Cache refreshed with {Count} active session files: {Files}",
+                allSessionFiles.Count, string.Join(", ", allSessionFiles.Take(5)));
+        }
+        if (allActivityFiles.Count > 0)
+        {
+            Log.Debug("[PlexVerify] Found {Count} files in background activities: {Files}",
+                allActivityFiles.Count, string.Join(", ", allActivityFiles.Take(5)));
         }
     }
 
@@ -286,6 +374,73 @@ public class PlexVerificationService
 
         // Get file path from Media/Part/@file in library metadata
         return xml.Root?.Element("Video")?.Element("Media")?.Element("Part")?.Attribute("file")?.Value;
+    }
+
+    /// <summary>
+    /// Get files being processed by background activities (intro detection, thumbnail generation, etc.)
+    /// Uses the /activities endpoint which shows server background tasks.
+    /// </summary>
+    private async Task<List<string>> GetServerActivityFilesAsync(PlexServer server, CancellationToken ct = default)
+    {
+        var url = $"{server.Url.TrimEnd('/')}/activities?X-Plex-Token={server.Token}";
+
+        var response = await _httpClient.GetStringAsync(url, ct);
+        var xml = XDocument.Parse(response);
+
+        var files = new List<string>();
+
+        // Activities that involve media files have a Context element with a key pointing to the media item
+        // Common activity types: library.analyze (intro detection), media.analyze, library.update.section.scan
+        var activities = xml.Root?.Elements("Activity").ToList() ?? new List<XElement>();
+
+        foreach (var activity in activities)
+        {
+            var type = activity.Attribute("type")?.Value ?? "";
+            var subtitle = activity.Attribute("subtitle")?.Value ?? "";
+
+            // These activity types involve reading media files
+            if (type.Contains("analyze", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("scan", StringComparison.OrdinalIgnoreCase) ||
+                type.Contains("generate", StringComparison.OrdinalIgnoreCase))
+            {
+                // The subtitle often contains the media title
+                // Context element has the library section key
+                var context = activity.Element("Context");
+                var key = context?.Attribute("key")?.Value;
+
+                if (!string.IsNullOrEmpty(key))
+                {
+                    try
+                    {
+                        // Try to get the file path from the metadata
+                        var filePath = await GetFilePathFromMetadata(server, key, ct);
+                        if (!string.IsNullOrEmpty(filePath))
+                        {
+                            var filename = Path.GetFileName(filePath);
+                            if (!string.IsNullOrEmpty(filename))
+                            {
+                                files.Add(filename);
+                                Log.Debug("[PlexVerify] Background activity ({Type}): {File}", type, filename);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore - key might not be a media item
+                    }
+                }
+
+                // Also try to extract from subtitle if it looks like a filename
+                if (!string.IsNullOrEmpty(subtitle) && (subtitle.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ||
+                    subtitle.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                    subtitle.EndsWith(".avi", StringComparison.OrdinalIgnoreCase)))
+                {
+                    files.Add(Path.GetFileName(subtitle));
+                }
+            }
+        }
+
+        return files;
     }
 
     /// <summary>

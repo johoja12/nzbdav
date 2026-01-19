@@ -57,6 +57,7 @@ type BenchmarkResponse = {
     results: BenchmarkResult[];
     isComplete?: boolean;
     totalProviders?: number;
+    testFileId?: string;
 }
 
 type BenchmarkRunSummary = {
@@ -129,6 +130,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
     const [streamBufferSize, setStreamBufferSize] = useState(config["usenet.stream-buffer-size"] || "100");
     const [operationTimeout, setOperationTimeout] = useState(config["usenet.operation-timeout"] || "60");
     const [isRunningBenchmark, setIsRunningBenchmark] = useState(false);
+    const [isSelectingFile, setIsSelectingFile] = useState(false);
     const [benchmarkResults, setBenchmarkResults] = useState<BenchmarkResponse | null>(null);
     const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRunSummary[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -139,6 +141,9 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
     const [selectedProviderIndices, setSelectedProviderIndices] = useState<Set<number>>(new Set());
     const [includeLoadBalanced, setIncludeLoadBalanced] = useState(true);
     const [currentBenchmarkRunId, setCurrentBenchmarkRunId] = useState<string | null>(null);
+    const [lastBenchmarkFileId, setLastBenchmarkFileId] = useState<string | null>(null);
+    const [lastBenchmarkFileName, setLastBenchmarkFileName] = useState<string | null>(null);
+    const [reuseSameFile, setReuseSameFile] = useState(false);
 
     // handlers
     const handleStatsEnableChange = useCallback((checked: boolean) => {
@@ -319,26 +324,50 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
             return;
         }
 
-        setIsRunningBenchmark(true);
+        setIsSelectingFile(true);
         setBenchmarkResults(null);
-        addToast(`Starting provider benchmark. Testing ${selectedProviderIndices.size} provider(s)...`, "info", "Benchmark Started");
 
         try {
+            const requestBody: {
+                providerIndices: number[];
+                includeLoadBalanced: boolean;
+                fileId?: string;
+            } = {
+                providerIndices: Array.from(selectedProviderIndices),
+                includeLoadBalanced: includeLoadBalanced && selectedProviderIndices.size > 1
+            };
+
+            // If user wants to reuse the same file and we have a file ID, include it
+            if (reuseSameFile && lastBenchmarkFileId) {
+                requestBody.fileId = lastBenchmarkFileId;
+            }
+
             const response = await fetch('/api/provider-benchmark', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    providerIndices: Array.from(selectedProviderIndices),
-                    includeLoadBalanced: includeLoadBalanced && selectedProviderIndices.size > 1
-                })
+                body: JSON.stringify(requestBody)
             });
             const data: BenchmarkResponse = await response.json();
 
+            setIsSelectingFile(false);
+
             if (data.status) {
+                // Store the file ID and name for potential reuse
+                if (data.testFileId) {
+                    setLastBenchmarkFileId(data.testFileId);
+                }
+                if (data.testFileName) {
+                    setLastBenchmarkFileName(data.testFileName);
+                }
+
                 // Track this run's ID so we only process WebSocket messages for it
                 if (data.runId) {
                     setCurrentBenchmarkRunId(data.runId);
                 }
+
+                // Benchmark is now running
+                setIsRunningBenchmark(true);
+                addToast(`Benchmark started. Testing ${selectedProviderIndices.size} provider(s) with file: ${data.testFileName || 'unknown'}`, "info", "Benchmark Started");
 
                 // Set initial results (will be updated via WebSocket as providers complete)
                 setBenchmarkResults(data);
@@ -358,11 +387,12 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 addToast(data.error || "Benchmark failed", "danger", "Error");
             }
         } catch (error) {
+            setIsSelectingFile(false);
             setIsRunningBenchmark(false);
             addToast("Network error during benchmark: " + error, "danger", "Error");
         }
         // Note: Don't set isRunningBenchmark=false here - WebSocket handles completion
-    }, [addToast, fetchBenchmarkHistory, selectedProviderIndices, includeLoadBalanced]);
+    }, [addToast, fetchBenchmarkHistory, selectedProviderIndices, includeLoadBalanced, reuseSameFile, lastBenchmarkFileId]);
 
     // effects
     useEffect(() => {
@@ -696,9 +726,9 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                             variant="primary"
                             size="sm"
                             onClick={handleRunBenchmark}
-                            disabled={isRunningBenchmark}
+                            disabled={isRunningBenchmark || isSelectingFile}
                         >
-                            {isRunningBenchmark ? "Running..." : "Run Benchmark"}
+                            {isSelectingFile ? "Selecting File..." : isRunningBenchmark ? "Running..." : "Run Benchmark"}
                         </Button>
                     </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--bs-secondary-color)', marginBottom: '12px' }}>
@@ -707,7 +737,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                     </div>
 
                     {/* Provider Selection */}
-                    {benchmarkProviders.length > 0 && !isRunningBenchmark && (
+                    {benchmarkProviders.length > 0 && !isRunningBenchmark && !isSelectingFile && (
                         <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: 'var(--bs-tertiary-bg)', borderRadius: '6px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                 <div style={{ fontWeight: 500, fontSize: '0.9rem' }}>Select Providers to Test</div>
@@ -762,15 +792,36 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                     </label>
                                 </div>
                             )}
+                            {lastBenchmarkFileId && (
+                                <div style={{ marginTop: '10px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={reuseSameFile}
+                                            onChange={(e) => setReuseSameFile(e.target.checked)}
+                                        />
+                                        <span>Re-use same file: <em>{lastBenchmarkFileName || 'previous file'}</em></span>
+                                    </label>
+                                </div>
+                            )}
                             <div style={{ marginTop: '8px', fontSize: '0.8rem', color: 'var(--bs-secondary-color)' }}>
                                 {selectedProviderIndices.size} provider{selectedProviderIndices.size !== 1 ? 's' : ''} selected
                             </div>
                         </div>
                     )}
 
+                    {isSelectingFile && (
+                        <div className={`${styles.alert} ${styles["alert-info"]}`}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div className={styles.spinner}></div>
+                                <span>Searching for a suitable test file (1GB+ with no missing articles)...</span>
+                            </div>
+                        </div>
+                    )}
+
                     {isRunningBenchmark && (
                         <div className={`${styles.alert} ${styles["alert-info"]}`}>
-                            Running benchmark... This may take a few minutes. Results will appear when complete.
+                            Running benchmark... This may take a few minutes. Results will appear as each provider completes.
                         </div>
                     )}
 

@@ -63,8 +63,25 @@ public class ProviderBenchmarkController(
     [HttpPost]
     public async Task<IActionResult> RunBenchmarkPost([FromBody] ProviderBenchmarkRequest? request)
     {
-        // Find a test file first (while we still have the HTTP context)
-        var testFile = await FindRandomLargeFile().ConfigureAwait(false);
+        // Find a test file - use provided FileId or find a random one
+        Guid? fileId = request?.FileId;
+        (string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)? testFile;
+
+        if (fileId.HasValue)
+        {
+            // User requested a specific file - try to get it
+            testFile = await GetFileById(fileId.Value).ConfigureAwait(false);
+            if (testFile == null)
+            {
+                Log.Warning("[Benchmark] Requested file {FileId} not found, falling back to random selection", fileId.Value);
+                testFile = await FindRandomLargeFile().ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            testFile = await FindRandomLargeFile().ConfigureAwait(false);
+        }
+
         if (testFile == null)
         {
             Log.Warning("[Benchmark] No suitable test file found (>= {MinSize} GB)", MinFileSizeBytes / 1024.0 / 1024.0 / 1024.0);
@@ -75,7 +92,7 @@ public class ProviderBenchmarkController(
             });
         }
 
-        var (fileName, segmentIds, fileSize) = testFile.Value;
+        var (fileName, segmentIds, fileSize, testFileId, segmentSizes) = testFile.Value;
 
         // Get all providers
         var allProviders = usenetClient.GetProviderInfo().ToList();
@@ -120,7 +137,7 @@ public class ProviderBenchmarkController(
         {
             await RunBenchmarkBackground(
                 runId, createdAt, fileName, segmentIds, fileSize, providers,
-                includeLoadBalanced, totalProviders
+                includeLoadBalanced, totalProviders, segmentSizes
             ).ConfigureAwait(false);
         });
 
@@ -134,7 +151,8 @@ public class ProviderBenchmarkController(
             TestFileSize = fileSize,
             TestSizeMb = TestSizeMb,
             TotalProviders = totalProviders,
-            IsComplete = false // Benchmark is running in background
+            IsComplete = false, // Benchmark is running in background
+            TestFileId = testFileId
         });
     }
 
@@ -150,7 +168,8 @@ public class ProviderBenchmarkController(
         long fileSize,
         List<(int Index, string Host, string Type, int MaxConnections)> providers,
         bool includeLoadBalanced,
-        int totalProviders)
+        int totalProviders,
+        long[]? segmentSizes)
     {
         var response = new ProviderBenchmarkResponse
         {
@@ -189,6 +208,7 @@ public class ProviderBenchmarkController(
                     fileSize,
                     fileName,
                     isLoadBalanced: false,
+                    segmentSizes,
                     benchmarkCts.Token
                 ).ConfigureAwait(false);
 
@@ -242,6 +262,7 @@ public class ProviderBenchmarkController(
                     fileSize,
                     fileName,
                     isLoadBalanced: true,
+                    segmentSizes,
                     benchmarkCts.Token
                 ).ConfigureAwait(false);
 
@@ -382,97 +403,136 @@ public class ProviderBenchmarkController(
         return Ok(response);
     }
 
-    private async Task<(string FileName, string[] SegmentIds, long FileSize)?> FindRandomLargeFile()
+    /// <summary>
+    /// Gets a file by its ID, trying all file types (NZB, Multipart, RAR).
+    /// </summary>
+    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> GetFileById(Guid id)
     {
-        // Get all DavItemIds that have missing article errors, with their error counts
-        var errorCounts = await dbContext.MissingArticleSummaries
-            .GroupBy(m => m.DavItemId)
-            .Select(g => new { DavItemId = g.Key, TotalErrors = g.Sum(x => x.TotalEvents) })
-            .ToDictionaryAsync(x => x.DavItemId, x => x.TotalErrors)
+        // Try NZB first
+        var nzbResult = await GetNzbFileData(id).ConfigureAwait(false);
+        if (nzbResult != null) return nzbResult;
+
+        // Try Multipart
+        var multipartResult = await GetMultipartFileData(id).ConfigureAwait(false);
+        if (multipartResult != null) return multipartResult;
+
+        // Try RAR
+        var rarResult = await GetRarFileData(id).ConfigureAwait(false);
+        if (rarResult != null) return rarResult;
+
+        return null;
+    }
+
+    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> FindRandomLargeFile()
+    {
+        // Get IDs with missing article errors (these should be avoided if possible)
+        var idsWithErrors = await dbContext.MissingArticleSummaries
+            .Select(m => m.DavItemId)
+            .Distinct()
+            .ToListAsync()
             .ConfigureAwait(false);
 
-        // Collect all candidate files with their error counts
-        var candidates = new List<(Guid Id, string Name, long FileSize, int ErrorCount, string Type)>();
+        var idsWithErrorsSet = idsWithErrors.ToHashSet();
 
-        // Find NzbFiles >= 1GB that are not corrupted
-        // Note: SegmentIds.Length can't be translated to SQL (JSON array), so we filter client-side
-        var nzbFiles = await dbContext.NzbFiles
+        // Try to find a file with no errors first, using a fast limited query
+        // Query each type with LIMIT to avoid loading all files into memory
+
+        // 1. Try NzbFiles first (most common type) - get a small batch of candidates
+        var nzbCandidates = await dbContext.NzbFiles
             .Include(n => n.DavItem)
             .Where(n => n.DavItem != null &&
                         n.DavItem.FileSize >= MinFileSizeBytes &&
                         !n.DavItem.IsCorrupted)
-            .Select(n => new { n.Id, n.DavItem!.Name, n.DavItem.FileSize, n.SegmentIds })
+            .Take(50) // Only check 50 candidates (randomization done client-side below)
+            .Select(n => new { n.Id, n.DavItem!.Name, n.DavItem.FileSize, n.SegmentIds, Type = "Nzb" })
             .ToListAsync()
             .ConfigureAwait(false);
 
-        foreach (var f in nzbFiles.Where(f => f.SegmentIds.Length > 0))
+        // Filter for files with segments and prefer those without errors
+        var validNzb = nzbCandidates
+            .Where(f => f.SegmentIds.Length > 0)
+            .OrderBy(f => idsWithErrorsSet.Contains(f.Id) ? 1 : 0)
+            .ThenBy(_ => Random.Shared.Next())
+            .FirstOrDefault();
+
+        if (validNzb != null && !idsWithErrorsSet.Contains(validNzb.Id))
         {
-            var errors = errorCounts.GetValueOrDefault(f.Id, 0);
-            candidates.Add((f.Id, f.Name, f.FileSize ?? 0, errors, "Nzb"));
+            Log.Information("[Benchmark] Selected NZB file: {Name} ({Size:F2} GB, 0 errors)",
+                validNzb.Name, (validNzb.FileSize ?? 0) / 1024.0 / 1024.0 / 1024.0);
+            return await GetNzbFileData(validNzb.Id).ConfigureAwait(false);
         }
 
-        // Find MultipartFiles >= 1GB that are not corrupted
-        var multipartFiles = await dbContext.MultipartFiles
+        // 2. Try MultipartFiles
+        var multipartCandidates = await dbContext.MultipartFiles
             .Include(m => m.DavItem)
             .Where(m => m.DavItem != null &&
                         m.DavItem.FileSize >= MinFileSizeBytes &&
                         !m.DavItem.IsCorrupted)
-            .Select(m => new { m.Id, m.DavItem!.Name, m.DavItem.FileSize })
+            .Take(50)
+            .Select(m => new { m.Id, m.DavItem!.Name, m.DavItem.FileSize, Type = "Multipart" })
             .ToListAsync()
             .ConfigureAwait(false);
 
-        foreach (var f in multipartFiles)
+        var validMultipart = multipartCandidates
+            .OrderBy(f => idsWithErrorsSet.Contains(f.Id) ? 1 : 0)
+            .ThenBy(_ => Random.Shared.Next())
+            .FirstOrDefault();
+
+        if (validMultipart != null && !idsWithErrorsSet.Contains(validMultipart.Id))
         {
-            var errors = errorCounts.GetValueOrDefault(f.Id, 0);
-            candidates.Add((f.Id, f.Name, f.FileSize ?? 0, errors, "Multipart"));
+            Log.Information("[Benchmark] Selected Multipart file: {Name} ({Size:F2} GB, 0 errors)",
+                validMultipart.Name, (validMultipart.FileSize ?? 0) / 1024.0 / 1024.0 / 1024.0);
+            return await GetMultipartFileData(validMultipart.Id).ConfigureAwait(false);
         }
 
-        // Find RarFiles >= 1GB that are not corrupted
-        var rarFiles = await dbContext.RarFiles
+        // 3. Try RarFiles
+        var rarCandidates = await dbContext.RarFiles
             .Include(r => r.DavItem)
             .Where(r => r.DavItem != null &&
                         r.DavItem.FileSize >= MinFileSizeBytes &&
                         !r.DavItem.IsCorrupted)
-            .Select(r => new { r.Id, r.DavItem!.Name, r.DavItem.FileSize })
+            .Take(50)
+            .Select(r => new { r.Id, r.DavItem!.Name, r.DavItem.FileSize, Type = "Rar" })
             .ToListAsync()
             .ConfigureAwait(false);
 
-        foreach (var f in rarFiles)
+        var validRar = rarCandidates
+            .OrderBy(f => idsWithErrorsSet.Contains(f.Id) ? 1 : 0)
+            .ThenBy(_ => Random.Shared.Next())
+            .FirstOrDefault();
+
+        if (validRar != null && !idsWithErrorsSet.Contains(validRar.Id))
         {
-            var errors = errorCounts.GetValueOrDefault(f.Id, 0);
-            candidates.Add((f.Id, f.Name, f.FileSize ?? 0, errors, "Rar"));
+            Log.Information("[Benchmark] Selected RAR file: {Name} ({Size:F2} GB, 0 errors)",
+                validRar.Name, (validRar.FileSize ?? 0) / 1024.0 / 1024.0 / 1024.0);
+            return await GetRarFileData(validRar.Id).ConfigureAwait(false);
         }
 
-        if (candidates.Count == 0)
-            return null;
-
-        // Sort by error count ascending (prefer files with 0 errors)
-        // Then randomize among files with same error count
-        var sortedCandidates = candidates
-            .OrderBy(c => c.ErrorCount)
-            .ThenBy(_ => Random.Shared.Next())
-            .ToList();
-
-        // Prefer files with 0 errors if available, otherwise pick the one with fewest errors
-        var zeroErrorCandidates = sortedCandidates.Where(c => c.ErrorCount == 0).ToList();
-        var selected = zeroErrorCandidates.Count > 0
-            ? zeroErrorCandidates[Random.Shared.Next(zeroErrorCandidates.Count)]
-            : sortedCandidates.First();
-
-        Log.Information("[Benchmark] Selected file: {Name} ({Size:F2} GB, {ErrorCount} missing article events, Type={Type})",
-            selected.Name, selected.FileSize / 1024.0 / 1024.0 / 1024.0, selected.ErrorCount, selected.Type);
-
-        // Fetch the actual file data based on type
-        return selected.Type switch
+        // 4. If no error-free files found, fall back to any valid file (preferring fewer errors)
+        // Use the first valid file we found from any type
+        if (validNzb != null)
         {
-            "Nzb" => await GetNzbFileData(selected.Id).ConfigureAwait(false),
-            "Multipart" => await GetMultipartFileData(selected.Id).ConfigureAwait(false),
-            "Rar" => await GetRarFileData(selected.Id).ConfigureAwait(false),
-            _ => null
-        };
+            Log.Information("[Benchmark] Selected NZB file (with errors): {Name} ({Size:F2} GB)",
+                validNzb.Name, (validNzb.FileSize ?? 0) / 1024.0 / 1024.0 / 1024.0);
+            return await GetNzbFileData(validNzb.Id).ConfigureAwait(false);
+        }
+        if (validMultipart != null)
+        {
+            Log.Information("[Benchmark] Selected Multipart file (with errors): {Name} ({Size:F2} GB)",
+                validMultipart.Name, (validMultipart.FileSize ?? 0) / 1024.0 / 1024.0 / 1024.0);
+            return await GetMultipartFileData(validMultipart.Id).ConfigureAwait(false);
+        }
+        if (validRar != null)
+        {
+            Log.Information("[Benchmark] Selected RAR file (with errors): {Name} ({Size:F2} GB)",
+                validRar.Name, (validRar.FileSize ?? 0) / 1024.0 / 1024.0 / 1024.0);
+            return await GetRarFileData(validRar.Id).ConfigureAwait(false);
+        }
+
+        return null;
     }
 
-    private async Task<(string FileName, string[] SegmentIds, long FileSize)?> GetNzbFileData(Guid id)
+    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> GetNzbFileData(Guid id)
     {
         var nzbFile = await dbContext.NzbFiles
             .Include(n => n.DavItem)
@@ -484,13 +544,15 @@ public class ProviderBenchmarkController(
             return (
                 nzbFile.DavItem?.Name ?? "Unknown",
                 nzbFile.SegmentIds,
-                nzbFile.DavItem?.FileSize ?? 0
+                nzbFile.DavItem?.FileSize ?? 0,
+                nzbFile.Id,
+                nzbFile.GetSegmentSizes()
             );
         }
         return null;
     }
 
-    private async Task<(string FileName, string[] SegmentIds, long FileSize)?> GetMultipartFileData(Guid id)
+    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> GetMultipartFileData(Guid id)
     {
         var multipartFile = await dbContext.MultipartFiles
             .Include(m => m.DavItem)
@@ -508,14 +570,16 @@ public class ProviderBenchmarkController(
                 return (
                     multipartFile.DavItem?.Name ?? "Unknown",
                     segmentIds,
-                    multipartFile.DavItem?.FileSize ?? 0
+                    multipartFile.DavItem?.FileSize ?? 0,
+                    multipartFile.Id,
+                    null // Multipart files don't store segment sizes separately
                 );
             }
         }
         return null;
     }
 
-    private async Task<(string FileName, string[] SegmentIds, long FileSize)?> GetRarFileData(Guid id)
+    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> GetRarFileData(Guid id)
     {
         var rarFile = await dbContext.RarFiles
             .Include(r => r.DavItem)
@@ -533,7 +597,9 @@ public class ProviderBenchmarkController(
                 return (
                     rarFile.DavItem?.Name ?? "Unknown",
                     segmentIds,
-                    rarFile.DavItem?.FileSize ?? 0
+                    rarFile.DavItem?.FileSize ?? 0,
+                    rarFile.Id,
+                    null // RAR files don't store segment sizes separately
                 );
             }
         }
@@ -548,6 +614,7 @@ public class ProviderBenchmarkController(
         long fileSize,
         string fileName,
         bool isLoadBalanced,
+        long[]? segmentSizes,
         CancellationToken cancellationToken)
     {
         var result = new ProviderBenchmarkResultDto
@@ -585,7 +652,8 @@ public class ProviderBenchmarkController(
                 ConnectionsPerTest,
                 usageContext,
                 useBufferedStreaming: true,
-                bufferSize: ConnectionsPerTest * 5
+                bufferSize: ConnectionsPerTest * 5,
+                segmentSizes: segmentSizes
             );
 
             var buffer = new byte[256 * 1024]; // 256KB chunks
@@ -659,6 +727,19 @@ public class ProviderBenchmarkController(
 
             Log.Warning("[Benchmark] Provider {Host} test timed out. Achieved {Speed:F2} MB/s ({Bytes:F1} MB in {Time:F1}s)",
                 providerHost, result.SpeedMbps, totalRead / 1024.0 / 1024.0, result.ElapsedSeconds);
+        }
+        catch (InvalidDataException ex) when (ex.Message.Contains("segment size is unknown"))
+        {
+            // First segment failed - provider likely doesn't have this article
+            stopwatch.Stop();
+            result.BytesDownloaded = 0;
+            result.ElapsedSeconds = stopwatch.Elapsed.TotalSeconds;
+            result.SpeedMbps = 0;
+            result.Success = false;
+            result.ErrorMessage = "First segment unavailable on this provider (article not found or missing)";
+
+            Log.Warning("[Benchmark] Provider {Host} failed: First segment not available. Provider may not have this article.",
+                providerHost);
         }
         catch (Exception ex)
         {

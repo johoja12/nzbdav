@@ -36,28 +36,28 @@ export default function Index({ loaderData }: Route.ComponentProps) {
 
                 {/* Health Stats */}
                 <Col md={4} lg={3}>
-                    <StatCard 
-                        title="Healthy" 
-                        value={summary.healthyCount} 
-                        icon={<ShieldCheck size={40} className="text-success" />} 
+                    <StatCard
+                        title="Healthy"
+                        value={summary.healthyCount}
+                        icon={<ShieldCheck size={40} className="text-success" />}
                         link="/health"
                     />
                 </Col>
                 <Col md={4} lg={3}>
-                    <StatCard 
-                        title="Unhealthy" 
-                        value={summary.unhealthyCount} 
-                        icon={<ShieldAlert size={40} className={summary.unhealthyCount > 0 ? "text-danger" : "text-muted"} />} 
-                        link="/health"
+                    <StatCard
+                        title="Unhealthy"
+                        value={summary.unhealthyCount}
+                        icon={<ShieldAlert size={40} className={summary.unhealthyCount > 0 ? "text-danger" : "text-muted"} />}
+                        link="/health?showUnhealthy=true"
                         variant={summary.unhealthyCount > 0 ? "danger" : "light"}
                     />
                 </Col>
                 <Col md={4} lg={3}>
-                    <StatCard 
-                        title="Corrupted" 
-                        value={summary.corruptedCount} 
-                        icon={<ShieldAlert size={40} className={summary.corruptedCount > 0 ? "text-danger" : "text-muted"} />} 
-                        link="/stats?tab=mapped"
+                    <StatCard
+                        title="Corrupted"
+                        value={summary.corruptedCount}
+                        icon={<ShieldAlert size={40} className={summary.corruptedCount > 0 ? "text-danger" : "text-muted"} />}
+                        link="/health?showFailed=true"
                         variant={summary.corruptedCount > 0 ? "danger" : "light"}
                     />
                 </Col>

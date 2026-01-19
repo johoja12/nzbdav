@@ -299,8 +299,32 @@ public class NzbFileStream : Stream
                 }
             }
             fileName ??= _usageContext.DetailsObject?.JobName ?? _usageContext.Details;
-            var isRealPlayback = PlexVerificationService.Instance?.IsFilePlaying(fileName) ?? true;
-            var usageType = isRealPlayback ? ConnectionUsageType.PlexPlayback : ConnectionUsageType.PlexBackground;
+
+            // Determine connection usage type based on Plex session state:
+            // - PlexPlayback: This file is in an active Plex session (real playback)
+            // - PlexBackground: Plex has active sessions, but this file isn't in them (background activity)
+            // - BufferedStreaming: No Plex sessions at all (direct WebDAV access, not Plex-related)
+            var plexService = PlexVerificationService.Instance;
+            ConnectionUsageType usageType;
+            if (plexService == null)
+            {
+                usageType = ConnectionUsageType.BufferedStreaming;
+            }
+            else if (plexService.IsFilePlaying(fileName))
+            {
+                usageType = ConnectionUsageType.PlexPlayback;
+            }
+            else if (plexService.IsFileInBackgroundActivity(fileName))
+            {
+                // This file is in a Plex background activity (intro detection, thumbnails, etc.)
+                // as reported by the /activities endpoint
+                usageType = ConnectionUsageType.PlexBackground;
+            }
+            else
+            {
+                // Not in Plex playback or background activity - standard buffered streaming
+                usageType = ConnectionUsageType.BufferedStreaming;
+            }
 
             var bufferedContext = new ConnectionUsageContext(
                 usageType,

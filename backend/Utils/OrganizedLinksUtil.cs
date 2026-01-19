@@ -49,6 +49,7 @@ public static class OrganizedLinksUtil
                             using var scope = _serviceProvider.CreateScope();
                             var db = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
                             var existing = db.LocalLinks.FirstOrDefault(x => x.DavItemId == davItemId);
+                            var isNewLink = existing == null;
                             if (existing != null)
                             {
                                 existing.LinkPath = linkPath;
@@ -58,6 +59,18 @@ public static class OrganizedLinksUtil
                                 db.LocalLinks.Add(new LocalLink { DavItemId = davItemId, LinkPath = linkPath });
                             }
                             await db.SaveChangesAsync();
+
+                            // Trigger STAT health check for newly mapped items that have never been checked
+                            if (isNewLink)
+                            {
+                                var item = await db.Items.FirstOrDefaultAsync(x => x.Id == davItemId && x.LastHealthCheck == null);
+                                if (item != null)
+                                {
+                                    item.NextHealthCheck = DateTimeOffset.UtcNow;
+                                    await db.SaveChangesAsync();
+                                    Log.Information($"[OrganizedLinksUtil] Triggered STAT health check for newly mapped item: {item.Name}");
+                                }
+                            }
                             break; // Success
                         }
                         finally
@@ -300,6 +313,27 @@ public static class OrganizedLinksUtil
             {
                 await dbContext.SaveChangesAsync(ct);
                 Log.Information($"[OrganizedLinksUtil] Sync complete. Added: {toAdd.Count}, Removed: {toRemove.Count}, Updated: {toUpdate.Count}");
+
+                // Trigger STAT health check for newly mapped items that have never been checked
+                if (toAdd.Count > 0)
+                {
+                    var newlyMappedIds = toAdd.Select(x => x.DavItemId).ToList();
+                    var itemsNeedingHealthCheck = await dbContext.Items
+                        .Where(x => newlyMappedIds.Contains(x.Id) && x.LastHealthCheck == null)
+                        .ToListAsync(ct);
+
+                    if (itemsNeedingHealthCheck.Count > 0)
+                    {
+                        var now = DateTimeOffset.UtcNow;
+                        foreach (var item in itemsNeedingHealthCheck)
+                        {
+                            // Set NextHealthCheck to now to trigger STAT check in next monitoring cycle
+                            item.NextHealthCheck = now;
+                        }
+                        await dbContext.SaveChangesAsync(ct);
+                        Log.Information($"[OrganizedLinksUtil] Triggered STAT health check for {itemsNeedingHealthCheck.Count} newly mapped items without prior health check.");
+                    }
+                }
             }
             else
             {

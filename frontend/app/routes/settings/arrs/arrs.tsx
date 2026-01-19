@@ -1,6 +1,11 @@
-import { Button, Form, Card, InputGroup, Spinner } from "react-bootstrap";
+import { Button, Form, Card, InputGroup, Spinner, Accordion } from "react-bootstrap";
 import styles from "./arrs.module.css"
 import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
+
+interface PathMapping {
+    NzbdavPrefix: string;
+    ArrPrefix: string;
+}
 
 type ArrsSettingsProps = {
     config: Record<string, string>
@@ -210,6 +215,8 @@ export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
                 )}
             </div>
             <hr />
+            <PathMappingsSection arrConfig={arrConfig} />
+            <hr />
             <div className={styles.section}>
                 <div className={styles.sectionHeader}>
                     <div>Manual Repair / Blacklist</div>
@@ -365,7 +372,7 @@ function RepairForm() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filePaths: [filePath] })
             });
-            
+
             if (response.ok) {
                 setStatus('success');
                 setMessage("Repair triggered successfully. Check logs for details.");
@@ -390,7 +397,7 @@ function RepairForm() {
                             type="text"
                             placeholder="e.g. /content/Movies/MyMovie/movie.mkv or My.Movie.Release.Name"
                             value={filePath}
-                            onChange={e => setFilePath(e.target.value)} 
+                            onChange={e => setFilePath(e.target.value)}
                         />
                         <Button
                             variant={status === 'success' ? 'success' : status === 'error' ? 'danger' : 'warning'}
@@ -405,6 +412,198 @@ function RepairForm() {
                 </Form.Group>
             </Card.Body>
         </Card>
+    );
+}
+
+interface PathMappingsSectionProps {
+    arrConfig: ArrConfig;
+}
+
+function PathMappingsSection({ arrConfig }: PathMappingsSectionProps) {
+    const [mappings, setMappings] = useState<Record<string, PathMapping[]>>({});
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState<string | null>(null);
+    const [saveStatus, setSaveStatus] = useState<Record<string, 'success' | 'error' | null>>({});
+
+    const allInstances = [
+        ...arrConfig.RadarrInstances.map((i: ConnectionDetails) => ({ ...i, type: 'Radarr' })),
+        ...arrConfig.SonarrInstances.map((i: ConnectionDetails) => ({ ...i, type: 'Sonarr' }))
+    ].filter(i => i.Host.trim());
+
+    useEffect(() => {
+        const loadMappings = async () => {
+            try {
+                const response = await fetch('/settings/arr-path-mappings?action=get');
+                const data = await response.json();
+                if (data.status && data.mappings) {
+                    setMappings(data.mappings);
+                }
+            } catch (e) {
+                console.error('Failed to load path mappings:', e);
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadMappings();
+    }, []);
+
+    const getInstanceMappings = (host: string): PathMapping[] => {
+        return mappings[host] || [];
+    };
+
+    const updateInstanceMappings = (host: string, newMappings: PathMapping[]) => {
+        setMappings(prev => ({ ...prev, [host]: newMappings }));
+        setSaveStatus(prev => ({ ...prev, [host]: null }));
+    };
+
+    const addMapping = (host: string) => {
+        const current = getInstanceMappings(host);
+        updateInstanceMappings(host, [...current, { NzbdavPrefix: '', ArrPrefix: '' }]);
+    };
+
+    const removeMapping = (host: string, index: number) => {
+        const current = getInstanceMappings(host);
+        updateInstanceMappings(host, current.filter((_, i) => i !== index));
+    };
+
+    const updateMapping = (host: string, index: number, field: keyof PathMapping, value: string) => {
+        const current = getInstanceMappings(host);
+        updateInstanceMappings(host, current.map((m, i) =>
+            i === index ? { ...m, [field]: value } : m
+        ));
+    };
+
+    const saveMappings = async (host: string) => {
+        setSaving(host);
+        setSaveStatus(prev => ({ ...prev, [host]: null }));
+        try {
+            const formData = new FormData();
+            formData.append('action', 'save');
+            formData.append('host', host);
+            formData.append('mappings', JSON.stringify(getInstanceMappings(host)));
+
+            const response = await fetch('/settings/arr-path-mappings', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            setSaveStatus(prev => ({ ...prev, [host]: data.status ? 'success' : 'error' }));
+        } catch (e) {
+            setSaveStatus(prev => ({ ...prev, [host]: 'error' }));
+        } finally {
+            setSaving(null);
+        }
+    };
+
+    if (allInstances.length === 0) {
+        return (
+            <div className={styles.section}>
+                <div className={styles.sectionHeader}>
+                    <div>Path Mappings</div>
+                </div>
+                <p className={styles.alertMessage}>
+                    Configure path mappings after adding Radarr/Sonarr instances above.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div className={styles.section}>
+            <div className={styles.sectionHeader}>
+                <div>Path Mappings</div>
+            </div>
+            <p className={styles.alertMessage}>
+                Configure path mappings when NzbDAV and Radarr/Sonarr see files at different paths.
+                For example, if NzbDAV sees <code>/mnt/media/</code> but Radarr sees <code>/media/</code>.
+            </p>
+            {loading ? (
+                <div className={styles.loadingContainer}><Spinner animation="border" size="sm" /> Loading...</div>
+            ) : (
+                <Accordion className={styles.pathMappingsAccordion}>
+                    {allInstances.map((instance, idx) => {
+                        const instanceMappings = getInstanceMappings(instance.Host);
+                        const hasUnsavedChanges = JSON.stringify(instanceMappings) !== JSON.stringify(mappings[instance.Host] || []);
+                        return (
+                            <Accordion.Item eventKey={String(idx)} key={instance.Host} className={styles.accordionItem}>
+                                <Accordion.Header className={styles.accordionHeader}>
+                                    <span className={styles.instanceType}>{instance.type}</span>
+                                    <span className={styles.instanceHost}>{instance.Host}</span>
+                                    {instanceMappings.length > 0 && (
+                                        <span className={styles.mappingCount}>({instanceMappings.length} mapping{instanceMappings.length !== 1 ? 's' : ''})</span>
+                                    )}
+                                </Accordion.Header>
+                                <Accordion.Body className={styles.accordionBody}>
+                                    {instanceMappings.length === 0 ? (
+                                        <p className={styles.noMappings}>No path mappings configured.</p>
+                                    ) : (
+                                        instanceMappings.map((mapping, mIdx) => (
+                                            <div key={mIdx} className={styles.mappingRow}>
+                                                <div className={styles.mappingInputs}>
+                                                    <Form.Group className={styles.mappingInput}>
+                                                        <Form.Label className={styles.mappingLabel}>NzbDAV Path</Form.Label>
+                                                        <Form.Control
+                                                            type="text"
+                                                            placeholder="/mnt/nzbdav/media/"
+                                                            value={mapping.NzbdavPrefix}
+                                                            onChange={e => updateMapping(instance.Host, mIdx, 'NzbdavPrefix', e.target.value)}
+                                                        />
+                                                    </Form.Group>
+                                                    <span className={styles.mappingArrow}>→</span>
+                                                    <Form.Group className={styles.mappingInput}>
+                                                        <Form.Label className={styles.mappingLabel}>Arr Path</Form.Label>
+                                                        <Form.Control
+                                                            type="text"
+                                                            placeholder="/media/"
+                                                            value={mapping.ArrPrefix}
+                                                            onChange={e => updateMapping(instance.Host, mIdx, 'ArrPrefix', e.target.value)}
+                                                        />
+                                                    </Form.Group>
+                                                    <Button
+                                                        variant="outline-danger"
+                                                        size="sm"
+                                                        className={styles.removeMappingBtn}
+                                                        onClick={() => removeMapping(instance.Host, mIdx)}
+                                                    >
+                                                        ×
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                    <div className={styles.mappingActions}>
+                                        <Button
+                                            variant="outline-primary"
+                                            size="sm"
+                                            onClick={() => addMapping(instance.Host)}
+                                        >
+                                            Add Mapping
+                                        </Button>
+                                        <Button
+                                            variant={saveStatus[instance.Host] === 'success' ? 'success' :
+                                                    saveStatus[instance.Host] === 'error' ? 'danger' : 'primary'}
+                                            size="sm"
+                                            onClick={() => saveMappings(instance.Host)}
+                                            disabled={saving === instance.Host}
+                                        >
+                                            {saving === instance.Host ? (
+                                                <Spinner animation="border" size="sm" />
+                                            ) : saveStatus[instance.Host] === 'success' ? (
+                                                '✓ Saved'
+                                            ) : saveStatus[instance.Host] === 'error' ? (
+                                                '✗ Error'
+                                            ) : (
+                                                'Save'
+                                            )}
+                                        </Button>
+                                    </div>
+                                </Accordion.Body>
+                            </Accordion.Item>
+                        );
+                    })}
+                </Accordion>
+            )}
+        </div>
     );
 }
 

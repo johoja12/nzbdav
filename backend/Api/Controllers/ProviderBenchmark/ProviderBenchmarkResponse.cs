@@ -11,6 +11,12 @@ public class ProviderBenchmarkRequest
     /// Whether to include a load-balanced test at the end.
     /// </summary>
     public bool IncludeLoadBalanced { get; set; } = true;
+
+    /// <summary>
+    /// Optional: Specify a file ID to use for the benchmark. If null, a random large file is selected.
+    /// This allows re-running benchmarks with the same file for consistent comparisons.
+    /// </summary>
+    public Guid? FileId { get; set; }
 }
 
 public class ProviderBenchmarkResponse : BaseApiResponse
@@ -32,6 +38,11 @@ public class ProviderBenchmarkResponse : BaseApiResponse
     /// Total number of providers to test (for progress calculation).
     /// </summary>
     public int TotalProviders { get; set; }
+
+    /// <summary>
+    /// The file ID used for this benchmark. Can be passed back in subsequent requests to reuse the same file.
+    /// </summary>
+    public Guid? TestFileId { get; set; }
 }
 
 public class ProviderBenchmarkResultDto

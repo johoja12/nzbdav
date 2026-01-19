@@ -93,3 +93,125 @@
     color: white;
     font-size: 14px;
 }
+
+/* Path Mappings Section */
+.loadingContainer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #93a1a1;
+    padding: 20px;
+}
+
+.pathMappingsAccordion {
+    margin-top: 16px;
+}
+
+.accordionItem {
+    background-color: #02181d;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.accordionItem .accordion-button {
+    background-color: #02181d;
+    color: #93a1a1;
+    padding: 12px 16px;
+    box-shadow: none;
+}
+
+.accordionItem .accordion-button:not(.collapsed) {
+    background-color: #073642;
+    color: #93a1a1;
+}
+
+.accordionItem .accordion-button::after {
+    filter: invert(0.6);
+}
+
+.accordionHeader {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.instanceType {
+    background-color: #268bd2;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.instanceHost {
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.mappingCount {
+    color: #586e75;
+    font-size: 12px;
+    margin-left: auto;
+    padding-right: 8px;
+}
+
+.accordionBody {
+    background-color: #002b36;
+    padding: 16px;
+}
+
+.noMappings {
+    color: #586e75;
+    font-style: italic;
+    margin: 0 0 12px 0;
+}
+
+.mappingRow {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.mappingRow:last-of-type {
+    border-bottom: none;
+}
+
+.mappingInputs {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.mappingInput {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.mappingLabel {
+    font-size: 11px;
+    color: #586e75;
+    margin-bottom: 4px;
+}
+
+.mappingArrow {
+    color: #586e75;
+    padding-bottom: 8px;
+    font-size: 16px;
+}
+
+.removeMappingBtn {
+    padding: 4px 8px;
+    font-size: 16px;
+    line-height: 1;
+    margin-bottom: 1px;
+}
+
+.mappingActions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    justify-content: flex-end;
+}
