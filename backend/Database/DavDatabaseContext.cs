@@ -43,6 +43,7 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
     public DbSet<AnalysisHistoryItem> AnalysisHistoryItems { get; set; }
     public DbSet<ProviderBenchmarkResult> ProviderBenchmarkResults { get; set; }
     public DbSet<RcloneInstance> RcloneInstances { get; set; }
+    public DbSet<BlobCleanupItem> BlobCleanupItems => Set<BlobCleanupItem>();
 
     // tables
     protected override void OnModelCreating(ModelBuilder b)
@@ -583,6 +584,15 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                     x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
                 );
             e.HasIndex(i => i.IsEnabled);
+        });
+
+        // BlobCleanupItem
+        b.Entity<BlobCleanupItem>(e =>
+        {
+            e.ToTable("BlobCleanupItems");
+            e.HasKey(i => i.Id);
+            e.Property(i => i.Id)
+                .ValueGeneratedNever();
         });
     }
 }

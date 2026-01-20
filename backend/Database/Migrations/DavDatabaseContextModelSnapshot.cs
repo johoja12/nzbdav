@@ -99,6 +99,16 @@ namespace NzbWebDAV.Database.Migrations
                     b.ToTable("BandwidthSamples", (string)null);
                 });
 
+            modelBuilder.Entity("NzbWebDAV.Database.Models.BlobCleanupItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("BlobCleanupItems", (string)null);
+                });
+
             modelBuilder.Entity("NzbWebDAV.Database.Models.ConfigItem", b =>
                 {
                     b.Property<string>("ConfigName")
