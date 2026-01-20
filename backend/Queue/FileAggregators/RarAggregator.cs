@@ -41,7 +41,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
             var aesParams = fileParts.Select(x => x.AesParams).FirstOrDefault(x => x != null);
             var obfuscationKey = fileParts.Select(x => x.ObfuscationKey).FirstOrDefault(x => x != null);
             var fileSize = aesParams?.DecodedSize ?? fileParts.Sum(x => x.ByteRangeWithinPart.Count);
-            var parentDirectory = EnsureExtractPath(pathWithinArchive);
+            var parentDirectory = EnsureParentDirectory(pathWithinArchive);
             var name = Path.GetFileName(pathWithinArchive);
 
             // If there is only one file in the archive and the file-name is obfuscated,
