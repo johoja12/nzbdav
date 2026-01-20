@@ -102,12 +102,18 @@ public class RarProcessor(
         var archiveName = GetArchiveName(fileInfo);
 
         // Try to get volume number from RAR headers (more reliable than filename parsing)
-        var volumeNumber = GetVolumeNumberFromHeaders(headers);
-        var partNumber = volumeNumber ?? GetPartNumber(fileInfo.FileName);
+        var volumeNumberFromHeader = GetVolumeNumberFromHeaders(headers);
+        var volumeNumberFromFilename = GetPartNumber(fileInfo.FileName);
 
-        if (volumeNumber.HasValue)
+        var partNumber = new PartNumber
         {
-            Log.Debug("[RarProcessor] Using RAR header volume number {VolumeNumber} for {FileName}", volumeNumber.Value, fileInfo.FileName);
+            PartNumberFromHeader = volumeNumberFromHeader,
+            PartNumberFromFilename = volumeNumberFromFilename
+        };
+
+        if (volumeNumberFromHeader.HasValue)
+        {
+            Log.Debug("[RarProcessor] Using RAR header volume number {VolumeNumber} for {FileName}", volumeNumberFromHeader.Value, fileInfo.FileName);
         }
 
         var offset = Math.Max(0, fileInfo.MagicOffset);
@@ -154,6 +160,7 @@ public class RarProcessor(
                 ),
                 AesParams = x.GetAesParams(password),
                 ObfuscationKey = obfuscationKey,
+                FileUncompressedSize = x.GetUncompressedSize(),
                 ReleaseDate = fileInfo.ReleaseDate,
             });
         }
@@ -277,12 +284,19 @@ public class RarProcessor(
         public required NzbFile NzbFile { get; init; }
         public required long PartSize { get; init; }
         public required string ArchiveName { get; init; }
-        public required int PartNumber { get; init; }
+        public required PartNumber PartNumber { get; init; }
         public required DateTimeOffset ReleaseDate { get; init; }
 
         public required string PathWithinArchive { get; init; }
         public required LongRange ByteRangeWithinPart { get; init; }
         public required AesParams? AesParams { get; init; }
         public byte[]? ObfuscationKey { get; init; }
+        public required long FileUncompressedSize { get; init; }
+    }
+
+    public record PartNumber
+    {
+        public int? PartNumberFromHeader { get; init; }
+        public int? PartNumberFromFilename { get; init; }
     }
 }
