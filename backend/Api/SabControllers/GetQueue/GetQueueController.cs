@@ -29,7 +29,7 @@ public class GetQueueController(
 
         // get slots
         var slots = queueItems
-            .Prepend(inProgressQueueItem)
+            .Prepend(request is { Start: 0, Limit: > 0 } ? inProgressQueueItem : null)
             .Where(queueItem => queueItem != null)
             .Select((queueItem, index) =>
             {
