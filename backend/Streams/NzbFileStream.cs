@@ -88,6 +88,9 @@ public class NzbFileStream : Stream
         ObjectDisposedException.ThrowIf(_disposed, this);
         _totalReadCount++;
 
+        // Fix from upstream: check EOF before attempting to read (fixes "Cannot find byte position" bug)
+        if (_position >= _fileSize) return 0;
+
         if (_innerStream == null)
         {
             Serilog.Log.Debug("[NzbFileStream] Creating inner stream at position {Position}", _position);
