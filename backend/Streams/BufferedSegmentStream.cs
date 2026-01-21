@@ -965,8 +965,14 @@ public class BufferedSegmentStream : Stream
             // Merge straggler exclusions with retry-specific exclusions
             var excludedProviders = MergeExclusions(initialExclusions, retryExclusions);
 
-            // Create a scoped context with the combined exclusions (struct-based, no race condition)
-            using var retryScope = ct.SetScopedContext(baseContext.WithExcludedProviders(excludedProviders));
+            // Only create a new scoped context if we have NEW retry-specific exclusions
+            // On the first attempt (retryExclusions empty), the worker's context from line 757 already has correct exclusions
+            // Creating a duplicate scope would overwrite it, then both would try to dispose the same key (causing warnings)
+            IDisposable? retryScope = null;
+            if (retryExclusions.Count > 0)
+            {
+                retryScope = ct.SetScopedContext(baseContext.WithExcludedProviders(excludedProviders));
+            }
 
             Stream? stream = null;
             try
@@ -1148,6 +1154,7 @@ public class BufferedSegmentStream : Stream
             {
                 if (stream != null)
                     await stream.DisposeAsync().ConfigureAwait(false);
+                retryScope?.Dispose();
             }
         }
 
