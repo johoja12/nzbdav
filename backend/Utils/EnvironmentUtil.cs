@@ -8,6 +8,11 @@ public static class EnvironmentUtil
                throw new Exception($"The environment variable `{envVariable}` must be set.");
     }
 
+    public static string? GetEnvironmentVariable(string envVariable)
+    {
+        return Environment.GetEnvironmentVariable(envVariable);
+    }
+
     public static long? GetLongVariable(string envVariable)
     {
         return long.TryParse(Environment.GetEnvironmentVariable(envVariable), out var longValue) ? longValue : null;

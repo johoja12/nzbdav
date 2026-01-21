@@ -238,13 +238,18 @@ public class FullNzbTester
                             storedSegments.Add(new RarProcessor.StoredFileSegment
                             {
                                 NzbFile = file.NzbFile,
-                                PartNumber = partNumber++,
+                                PartNumber = new RarProcessor.PartNumber
+                                {
+                                    PartNumberFromFilename = partNumber++,
+                                    PartNumberFromHeader = null
+                                },
                                 PartSize = fileSize,
                                 ArchiveName = baseGroup.Key + ".rar",
                                 PathWithinArchive = baseGroup.Key + " (combined RAR stream)",
                                 ByteRangeWithinPart = LongRange.FromStartAndSize(cumulativeOffset, fileSize),
                                 AesParams = null,
-                                ReleaseDate = file.ReleaseDate
+                                ReleaseDate = file.ReleaseDate,
+                                FileUncompressedSize = fileSize
                             });
 
                             cumulativeOffset += fileSize;
@@ -271,9 +276,10 @@ public class FullNzbTester
                             {
                                 var totalSize = archivedFile.Sum(s => s.ByteRangeWithinPart.Count);
                                 Console.WriteLine($"    - {archivedFile.Key}: {totalSize} bytes in {archivedFile.Count()} segments");
-                                foreach (var seg in archivedFile.OrderBy(s => s.PartNumber))
+                                foreach (var seg in archivedFile.OrderBy(s => s.PartNumber.PartNumberFromHeader ?? s.PartNumber.PartNumberFromFilename ?? 0))
                                 {
-                                    Console.WriteLine($"      Part {seg.PartNumber}: Offset={seg.ByteRangeWithinPart.StartInclusive}, Count={seg.ByteRangeWithinPart.Count}, PartSize={seg.PartSize}");
+                                    var partNum = seg.PartNumber.PartNumberFromHeader ?? seg.PartNumber.PartNumberFromFilename ?? 0;
+                                    Console.WriteLine($"      Part {partNum}: Offset={seg.ByteRangeWithinPart.StartInclusive}, Count={seg.ByteRangeWithinPart.Count}, PartSize={seg.PartSize}");
                                 }
                             }
                         }
@@ -316,13 +322,18 @@ public class FullNzbTester
                             new RarProcessor.StoredFileSegment
                             {
                                 NzbFile = file.NzbFile,
-                                PartNumber = 1,
+                                PartNumber = new RarProcessor.PartNumber
+                                {
+                                    PartNumberFromFilename = 1,
+                                    PartNumberFromHeader = null
+                                },
                                 PartSize = fileSize,
                                 ArchiveName = file.FileName,
                                 PathWithinArchive = file.FileName,
                                 ByteRangeWithinPart = LongRange.FromStartAndSize(0, fileSize),
                                 AesParams = null,
-                                ReleaseDate = file.ReleaseDate
+                                ReleaseDate = file.ReleaseDate,
+                                FileUncompressedSize = fileSize
                             }
                         }
                     });
