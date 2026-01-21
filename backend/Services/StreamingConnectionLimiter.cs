@@ -87,7 +87,7 @@ public class StreamingConnectionLimiter : IDisposable
     /// <param name="streamType">The type of stream: PlexPlayback, PlexBackground, or other</param>
     public void RegisterStream(ConnectionUsageType streamType)
     {
-        Interlocked.Increment(ref _activeStreams);
+        var newCount = Interlocked.Increment(ref _activeStreams);
         if (streamType == ConnectionUsageType.PlexPlayback)
         {
             Interlocked.Increment(ref _activeRealPlaybackStreams);
@@ -96,8 +96,8 @@ public class StreamingConnectionLimiter : IDisposable
         {
             Interlocked.Increment(ref _activePlexBackgroundStreams);
         }
-        Log.Debug("[StreamingConnectionLimiter] Stream registered ({StreamType}). Active: {ActiveStreams} (PlexPlayback: {RealPlayback}, PlexBackground: {PlexBg}), Available: {Available}/{Total}",
-            streamType, _activeStreams, _activeRealPlaybackStreams, _activePlexBackgroundStreams, AvailableConnections, TotalConnections);
+        Log.Information("[StreamingConnectionLimiter] STREAM REGISTERED ({StreamType}). Active: {ActiveStreams} (PlexPlayback: {RealPlayback}, PlexBackground: {PlexBg}), Available: {Available}/{Total}",
+            streamType, newCount, _activeRealPlaybackStreams, _activePlexBackgroundStreams, AvailableConnections, TotalConnections);
     }
 
     /// <summary>
@@ -106,7 +106,7 @@ public class StreamingConnectionLimiter : IDisposable
     /// <param name="streamType">The type of stream: PlexPlayback, PlexBackground, or other</param>
     public void UnregisterStream(ConnectionUsageType streamType)
     {
-        Interlocked.Decrement(ref _activeStreams);
+        var newCount = Interlocked.Decrement(ref _activeStreams);
         if (streamType == ConnectionUsageType.PlexPlayback)
         {
             Interlocked.Decrement(ref _activeRealPlaybackStreams);
@@ -115,8 +115,8 @@ public class StreamingConnectionLimiter : IDisposable
         {
             Interlocked.Decrement(ref _activePlexBackgroundStreams);
         }
-        Log.Debug("[StreamingConnectionLimiter] Stream unregistered ({StreamType}). Active: {ActiveStreams} (PlexPlayback: {RealPlayback}, PlexBackground: {PlexBg}), Available: {Available}/{Total}",
-            streamType, _activeStreams, _activeRealPlaybackStreams, _activePlexBackgroundStreams, AvailableConnections, TotalConnections);
+        Log.Information("[StreamingConnectionLimiter] STREAM UNREGISTERED ({StreamType}). Active: {ActiveStreams} (PlexPlayback: {RealPlayback}, PlexBackground: {PlexBg}), Available: {Available}/{Total}",
+            streamType, newCount, _activeRealPlaybackStreams, _activePlexBackgroundStreams, AvailableConnections, TotalConnections);
     }
 
     // Legacy overloads for backward compatibility
@@ -255,12 +255,57 @@ public class StreamingConnectionLimiter : IDisposable
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
             while (await timer.WaitForNextTickAsync(_sweeperCts.Token).ConfigureAwait(false))
             {
+                LogPeriodicStats();
                 await SweepStuckPermits().ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
         {
             // Normal on disposal
+        }
+    }
+
+    /// <summary>
+    /// Log periodic stats for debugging resource leaks
+    /// </summary>
+    private void LogPeriodicStats()
+    {
+        var stats = GetStats();
+        var acquireReleaseBalance = stats.Acquires - stats.Releases - stats.ForcedReleases;
+        var semaphoreUsed = stats.Total - stats.Available;
+
+        // Calculate discrepancy between tracking and semaphore
+        // If these don't match, we have a leak or tracking bug
+        var trackingVsSemaphore = stats.TrackedPermits - semaphoreUsed;
+
+        Log.Information(
+            "[StreamingConnectionLimiter] PERIODIC STATS: " +
+            "Semaphore={Used}/{Total} ({Available} available), " +
+            "ActiveStreams={ActiveStreams}, " +
+            "Tracked={TrackedPermits}, " +
+            "Acquires={Acquires}, Releases={Releases}, Timeouts={Timeouts}, ForcedReleases={ForcedReleases}, " +
+            "Balance={Balance}, TrackingDiscrepancy={Discrepancy}",
+            semaphoreUsed, stats.Total, stats.Available,
+            stats.ActiveStreams,
+            stats.TrackedPermits,
+            stats.Acquires, stats.Releases, stats.Timeouts, stats.ForcedReleases,
+            acquireReleaseBalance, trackingVsSemaphore);
+
+        // Warn if there's a significant discrepancy
+        if (Math.Abs(trackingVsSemaphore) > 5)
+        {
+            Log.Warning(
+                "[StreamingConnectionLimiter] TRACKING DISCREPANCY: {TrackedPermits} tracked vs {SemaphoreUsed} semaphore used. " +
+                "This may indicate a permit leak or tracking bug.",
+                stats.TrackedPermits, semaphoreUsed);
+        }
+
+        // Warn if permits are being used but no active streams
+        if (semaphoreUsed > 0 && stats.ActiveStreams == 0)
+        {
+            Log.Warning(
+                "[StreamingConnectionLimiter] POTENTIAL LEAK: {Used} permits in use but 0 active streams registered.",
+                semaphoreUsed);
         }
     }
 

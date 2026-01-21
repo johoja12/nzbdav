@@ -261,7 +261,12 @@ public class NzbFileStream : Stream
             _usageContext.UsageType != ConnectionUsageType.Queue;
 
         // Use buffered streaming if configured for better performance
-        if (shouldUseBufferedStreaming && _concurrentConnections >= 3 && _fileSegmentIds.Length > _concurrentConnections)
+        // Condition: at least 3 connections AND at least 3 segments (enough to benefit from parallel prefetching)
+        // Lower threshold (3) ensures multipart files with small RAR parts still use buffered streaming
+        // Previously required segments > connections, which caused RAR parts with fewer segments than
+        // total-streaming-connections to fall back to slow sequential fetching
+        var minSegmentsForBuffering = 3;
+        if (shouldUseBufferedStreaming && _concurrentConnections >= 3 && _fileSegmentIds.Length >= minSegmentsForBuffering)
         {
             // Set BufferedStreaming context - this will be the ONLY ConnectionUsageContext
             // Calculate the byte offset where this stream starts within this NZB file

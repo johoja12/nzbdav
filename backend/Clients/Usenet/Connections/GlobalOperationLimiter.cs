@@ -22,7 +22,7 @@ public class GlobalOperationLimiter : IDisposable
     public GlobalOperationLimiter(
         int maxQueueConnections,
         int maxHealthCheckConnections,
-        int totalConnections,
+        int maxStreamingConnections,
         ConfigManager? configManager = null)
     {
         _configManager = configManager;
@@ -30,8 +30,7 @@ public class GlobalOperationLimiter : IDisposable
         // Ensure values are at least 1 to prevent SemaphoreSlim errors
         maxQueueConnections = Math.Max(1, maxQueueConnections);
         maxHealthCheckConnections = Math.Max(1, maxHealthCheckConnections);
-
-        var maxStreamingConnections = Math.Max(1, totalConnections - maxQueueConnections - maxHealthCheckConnections);
+        maxStreamingConnections = Math.Max(1, maxStreamingConnections);
 
         _guaranteedLimits = new Dictionary<ConnectionUsageType, int>
         {
@@ -57,7 +56,47 @@ public class GlobalOperationLimiter : IDisposable
         _healthCheckSemaphore = new SemaphoreSlim(maxHealthCheckConnections, maxHealthCheckConnections);
         _streamingSemaphore = new SemaphoreSlim(maxStreamingConnections, maxStreamingConnections);
 
-        // Serilog.Log.Information($"[GlobalOperationLimiter] Initialized: Queue={maxQueueConnections}, HealthCheck={maxHealthCheckConnections}, Streaming={maxStreamingConnections}, Total={totalConnections}");
+        Serilog.Log.Information("[GlobalOperationLimiter] Initialized: Queue={QueueLimit}, HealthCheck={HealthCheckLimit}, Streaming={StreamingLimit}",
+            maxQueueConnections, maxHealthCheckConnections, maxStreamingConnections);
+
+        // Start background stats logger
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+                while (await timer.WaitForNextTickAsync().ConfigureAwait(false))
+                {
+                    LogPeriodicStats();
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
+    /// <summary>
+    /// Log periodic stats for debugging resource leaks
+    /// </summary>
+    private void LogPeriodicStats()
+    {
+        lock (_lock)
+        {
+            var usageBreakdown = GetUsageBreakdown();
+            var queueAvailable = _queueSemaphore.CurrentCount;
+            var healthCheckAvailable = _healthCheckSemaphore.CurrentCount;
+            var streamingAvailable = _streamingSemaphore.CurrentCount;
+
+            Log.Information(
+                "[GlobalOperationLimiter] PERIODIC STATS: " +
+                "Queue={QueueUsed}/{QueueLimit} ({QueueAvail} avail), " +
+                "HealthCheck={HCUsed}/{HCLimit} ({HCAvail} avail), " +
+                "Streaming={StreamUsed}/{StreamLimit} ({StreamAvail} avail), " +
+                "Usage={UsageBreakdown}",
+                _guaranteedLimits[ConnectionUsageType.Queue] - queueAvailable, _guaranteedLimits[ConnectionUsageType.Queue], queueAvailable,
+                _guaranteedLimits[ConnectionUsageType.HealthCheck] - healthCheckAvailable, _guaranteedLimits[ConnectionUsageType.HealthCheck], healthCheckAvailable,
+                _guaranteedLimits[ConnectionUsageType.Streaming] - streamingAvailable, _guaranteedLimits[ConnectionUsageType.Streaming], streamingAvailable,
+                usageBreakdown);
+        }
     }
 
     /// <summary>

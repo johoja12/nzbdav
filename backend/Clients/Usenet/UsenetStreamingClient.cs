@@ -111,16 +111,40 @@ public class UsenetStreamingClient
 
                     if (expectedTotal == actualTotal)
                     {
+                        // Sample a few additional segments from the middle to catch missing articles
+                        // Check 3 evenly-spaced segments from the middle (sequential to avoid connection pool exhaustion)
+                        // This adds minimal overhead while improving detection of missing article blocks
+                        if (segmentIds.Length > 20)
+                        {
+                            // Sample at 25%, 50%, 75% positions to spread coverage
+                            var quarter = segmentIds.Length / 4;
+                            var sampleIndices = new[] { quarter, quarter * 2, quarter * 3 };
+                            foreach (var idx in sampleIndices)
+                            {
+                                if (idx > 1 && idx < segmentIds.Length - 1)
+                                {
+                                    // This will throw UsenetArticleNotFoundException if the segment is missing
+                                    await _client.GetSegmentYencHeaderAsync(segmentIds[idx], fastCheckCts.Token).ConfigureAwait(false);
+                                }
+                            }
+                        }
+
                         Serilog.Log.Debug("[UsenetStreamingClient] Smart Analysis: Uniform segments detected ({Size} bytes). Skipping full scan for {Count} segments.", first.PartSize, segmentIds.Length);
-                        
+
                         var fastSizes = new long[segmentIds.Length];
                         Array.Fill(fastSizes, first.PartSize);
                         fastSizes[^1] = last.PartSize;
-                        
+
                         progress?.Report(segmentIds.Length);
                         return fastSizes;
                     }
                 }
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Don't swallow missing article errors - these indicate the file is unavailable
+                // Let the caller decide how to handle based on file importance
+                throw;
             }
             catch (Exception ex)
             {
@@ -441,13 +465,14 @@ public class UsenetStreamingClient
         var operationTimeout = _configManager.GetUsenetOperationTimeout();
 
         // Create ONE global operation limiter shared across ALL providers
-        // Use effectivePoolSize to respect user's streaming connection limit
+        // Each operation type gets its own dedicated limit (not shared from a total budget)
         var maxQueueConnections = _configManager.GetMaxQueueConnections();
         var maxHealthCheckConnections = _configManager.GetMaxRepairConnections();
+        // effectivePoolSize IS the streaming limit - pass it directly, not as a total to be split
         var globalLimiter = new GlobalOperationLimiter(
             maxQueueConnections,
             maxHealthCheckConnections,
-            effectivePoolSize,
+            effectivePoolSize,  // This is now used directly as maxStreamingConnections
             _configManager
         );
 

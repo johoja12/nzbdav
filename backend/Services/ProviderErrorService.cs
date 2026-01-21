@@ -100,6 +100,28 @@ public class ProviderErrorService : IDisposable
                         .Select(x => new { x.Id })
                         .FirstOrDefaultAsync();
 
+                    // Fallback: If no direct path match, try to find by job name in parent folder
+                    // This handles queue-originated errors where filename is just the job name
+                    if (davItem == null)
+                    {
+                        var jobName = group.First().JobName;
+                        if (!string.IsNullOrEmpty(jobName) && !jobName.StartsWith('/'))
+                        {
+                            // Find files whose path contains /{jobName}/ (i.e., files in a folder named after the job)
+                            // Exclude directories to get actual file items
+                            davItem = await dbContext.Items
+                                .Where(x => x.Path.Contains("/" + jobName + "/") && x.Type != DavItem.ItemType.Directory)
+                                .Select(x => new { x.Id })
+                                .FirstOrDefaultAsync();
+
+                            if (davItem != null)
+                            {
+                                Log.Debug("[ProviderErrorService] Matched job name '{JobName}' to DavItem {DavItemId} via parent folder lookup",
+                                    jobName, davItem.Id);
+                            }
+                        }
+                    }
+
                     if (summary == null)
                     {
                         summary = new MissingArticleSummary
@@ -468,11 +490,21 @@ public class ProviderErrorService : IDisposable
             var updatedCount = 0;
             foreach (var summary in summariesToUpdate)
             {
+                // Try direct path match first
                 var davItem = await dbContext.Items
                     .Where(x => x.Path == summary.Filename)
                     .Select(x => new { x.Id })
                     .FirstOrDefaultAsync(ct);
-                
+
+                // Fallback: If no direct match, try matching by job name in parent folder
+                if (davItem == null && !string.IsNullOrEmpty(summary.JobName) && !summary.JobName.StartsWith('/'))
+                {
+                    davItem = await dbContext.Items
+                        .Where(x => x.Path.Contains("/" + summary.JobName + "/") && x.Type != DavItem.ItemType.Directory)
+                        .Select(x => new { x.Id })
+                        .FirstOrDefaultAsync(ct);
+                }
+
                 if (davItem?.Id != null && davItem.Id != Guid.Empty)
                 {
                     summary.DavItemId = davItem.Id;

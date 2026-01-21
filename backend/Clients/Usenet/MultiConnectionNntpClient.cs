@@ -295,9 +295,11 @@ public class MultiConnectionNntpClient : INntpClient
                 // Return a new YencHeaderStream that wraps our callback stream, preserving headers
                 return new YencHeaderStream(stream.Header, stream.ArticleHeaders, wrappedStream);
             }
-            catch (Exception ex) when (ex is UsenetException or UsenetNotConnectedException or ObjectDisposedException or IOException or SocketException or TimeoutException or RetryableDownloadException)
+            catch (Exception ex) when (ex is UsenetException or UsenetNotConnectedException or ObjectDisposedException or IOException or SocketException or RetryableDownloadException)
             {
                 // we want to replace the underlying connection in cases of NntpExceptions or login failures.
+                // NOTE: TimeoutException is NOT retried here - timeouts indicate provider slowness, not connection issues.
+                // We let MultiProviderNntpClient handle timeouts by trying a different provider.
                 connectionLock.Replace();
                 connectionLock.Dispose();
                 connectionLock = null;
@@ -411,9 +413,11 @@ public class MultiConnectionNntpClient : INntpClient
 
                 return result;
             }
-            catch (Exception ex) when (ex is UsenetException or UsenetNotConnectedException or ObjectDisposedException or IOException or SocketException or TimeoutException or RetryableDownloadException)
+            catch (Exception ex) when (ex is UsenetException or UsenetNotConnectedException or ObjectDisposedException or IOException or SocketException or RetryableDownloadException)
             {
                 // we want to replace the underlying connection in cases of NntpExceptions or login failures.
+                // NOTE: TimeoutException is NOT retried here - timeouts indicate provider slowness, not connection issues.
+                // We let MultiProviderNntpClient handle timeouts by trying a different provider.
                 connectionLock.Replace();
                 connectionLock.Dispose();
                 isDisposed = true;

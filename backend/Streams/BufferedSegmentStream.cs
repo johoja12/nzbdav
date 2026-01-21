@@ -101,6 +101,124 @@ public class BufferedSegmentStream : Stream
     private readonly ConnectionUsageType _streamType; // Tracks the type for priority: PlexPlayback > PlexBackground > BufferedStreaming
     private readonly int _totalSegments;
 
+    // Dynamic straggler timeout tracking
+    private long _successfulFetchTimeMs; // Total time for successful fetches (for average calculation)
+    private int _successfulFetchCount;   // Number of successful fetches
+
+    // Per-stream provider performance scoring (for smart deprioritization)
+    // Key: provider index, Value: rolling window of recent results
+    private readonly ConcurrentDictionary<int, ProviderStreamScore> _providerScores = new();
+
+    private class ProviderStreamScore
+    {
+        // Rolling window size - track last N operations for success rate calculation
+        private const int WindowSize = 30; // Reduced from 50 for faster response to failures
+
+        // Circular buffer: true = success, false = failure
+        private readonly bool[] _recentResults = new bool[WindowSize];
+        private int _writeIndex; // Next position to write
+        private int _totalOperations; // Total operations recorded (for partial window)
+
+        // Use "recent failure weight" instead of pure consecutive count
+        // Each failure adds 2 points, each success subtracts 1 point (min 0)
+        // This ensures failures are "sticky" and don't immediately reset on success
+        private int _failureWeight;
+
+        public DateTimeOffset LastFailureTime;
+        public DateTimeOffset CooldownUntil; // Provider is deprioritized until this time
+
+        private readonly object _lock = new();
+
+        /// <summary>
+        /// Records a success in the rolling window.
+        /// Decays failure weight by 1 (doesn't reset to 0).
+        /// </summary>
+        public void RecordSuccess()
+        {
+            lock (_lock)
+            {
+                _recentResults[_writeIndex] = true;
+                _writeIndex = (_writeIndex + 1) % WindowSize;
+                _totalOperations++;
+                // Decay failure weight by 1, but never go below 0
+                _failureWeight = Math.Max(0, _failureWeight - 1);
+            }
+        }
+
+        /// <summary>
+        /// Records a failure in the rolling window.
+        /// Adds 2 to failure weight for faster escalation.
+        /// </summary>
+        public void RecordFailure()
+        {
+            lock (_lock)
+            {
+                _recentResults[_writeIndex] = false;
+                _writeIndex = (_writeIndex + 1) % WindowSize;
+                _totalOperations++;
+                // Add 2 to failure weight (failures count double)
+                _failureWeight += 2;
+                LastFailureTime = DateTimeOffset.UtcNow;
+            }
+        }
+
+        /// <summary>
+        /// Gets the current failure weight for cooldown calculation.
+        /// Range: 0 to unbounded, but realistically 0-20 in practice.
+        /// </summary>
+        public int FailureWeight => _failureWeight;
+
+        /// <summary>
+        /// Gets the success rate based on the rolling window of recent operations.
+        /// Returns 1.0 (assume good) if no operations recorded yet.
+        /// </summary>
+        public double SuccessRate
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    var count = Math.Min(_totalOperations, WindowSize);
+                    if (count == 0) return 1.0; // Assume good until proven otherwise
+
+                    var successCount = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (_recentResults[i]) successCount++;
+                    }
+                    return (double)successCount / count;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the total operations in the current window (for logging).
+        /// </summary>
+        public int WindowOperations => Math.Min(_totalOperations, WindowSize);
+
+        /// <summary>
+        /// Gets the failure count in the current window (for logging).
+        /// </summary>
+        public int WindowFailures
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    var count = Math.Min(_totalOperations, WindowSize);
+                    var failures = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (!_recentResults[i]) failures++;
+                    }
+                    return failures;
+                }
+            }
+        }
+
+        public bool IsInCooldown => DateTimeOffset.UtcNow < CooldownUntil;
+    }
+
     public int BufferedCount => _bufferedCount;
 
     // Detailed timing metrics (only collected when EnableDetailedTiming = true)
@@ -340,93 +458,101 @@ public class BufferedSegmentStream : Stream
                 }
             }, ct);
 
-            // Straggler Monitor Task
+            // Straggler Monitor Task - checks ALL active workers, cancels any running > dynamic timeout
             var monitorTask = Task.Run(async () =>
             {
                 try
                 {
+                    // Minimum timeout to avoid being too aggressive
+                    const double minTimeoutSeconds = 5.0;
+                    // Minimum samples required before enabling straggler detection
+                    const int minSamplesForDetection = 10;
+
                     while (!ct.IsCancellationRequested)
                     {
                         await Task.Delay(100, ct).ConfigureAwait(false); // Check every 100ms
 
-                        var nextNeeded = _nextIndexToRead;
-                        
-                        // Check if the next needed segment is active and running too long
-                        if (activeAssignments.TryGetValue(nextNeeded, out var assignment))
+                        var now = DateTimeOffset.UtcNow;
+
+                        // Calculate dynamic straggler timeout based on average successful fetch time
+                        var fetchCount = Volatile.Read(ref _successfulFetchCount);
+                        var fetchTimeMs = Volatile.Read(ref _successfulFetchTimeMs);
+
+                        // Don't run straggler detection until we have enough samples
+                        // This prevents killing workers during initial connection pool warmup
+                        if (fetchCount < minSamplesForDetection)
                         {
-                            var duration = DateTimeOffset.UtcNow - assignment.StartTime;
-                            var activeCount = activeAssignments.Count;
-                            var activeIndices = string.Join(",", activeAssignments.Keys.OrderBy(k => k).Take(10));
+                            continue;
+                        }
 
-                            // If running > 3s and not already racing
-                            // (Previously 5s but reducing to improve responsiveness)
-                            if (duration.TotalSeconds > 3.0 && !racingIndices.ContainsKey(nextNeeded))
+                        var avgFetchTimeMs = (double)fetchTimeMs / fetchCount;
+                        // Timeout = avg * 3, with minimum floor of 5 seconds
+                        var stragglerTimeoutSeconds = Math.Max(minTimeoutSeconds, (avgFetchTimeMs / 1000.0) * 3.0);
+
+                        // Check ALL active workers, not just the one blocking the consumer
+                        foreach (var kvp in activeAssignments)
+                        {
+                            var segmentIndex = kvp.Key;
+                            var assignment = kvp.Value;
+                            var duration = now - assignment.StartTime;
+
+                            // Skip if not stalled or already being raced
+                            if (duration.TotalSeconds <= stragglerTimeoutSeconds) continue;
+                            if (racingIndices.ContainsKey(segmentIndex)) continue;
+
+                            // This worker is stalled - cancel it and retry on different provider
+                            var workerContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
+                            var hasForcedProvider = workerContext.DetailsObject?.ForcedProviderIndex.HasValue ?? false;
+                            var failedProviderIndex = workerContext.DetailsObject?.CurrentProviderIndex;
+
+                            // Record which provider failed (so retry uses different provider)
+                            // Skip if ForcedProviderIndex is set - there's only one provider allowed
+                            if (failedProviderIndex.HasValue && !hasForcedProvider)
                             {
-                                Log.Debug("[BufferedStream] STRAGGLER CHECK: NextNeeded={NextNeeded}, Duration={Duration}s, ActiveCount={ActiveCount}, ActiveIndices=[{ActiveIndices}]",
-                                    nextNeeded, duration.TotalSeconds, activeCount, activeIndices);
+                                // Check how many providers we have and how many are already excluded
+                                var multiClient = GetMultiProviderClient(client);
+                                var totalProviders = multiClient?.Providers.Count ?? 1;
+                                var currentExclusions = _failedProvidersPerSegment.TryGetValue(segmentIndex, out var existing) ? existing.Count : 0;
 
-                                // Find a victim to preempt (highest index currently running)
-                                var victim = activeAssignments.Keys.DefaultIfEmpty(-1).Max();
-
-                                if (victim > nextNeeded)
+                                // Don't exclude if we'd leave no providers - let the last one keep trying
+                                if (currentExclusions >= totalProviders - 1)
                                 {
-                                    if (activeAssignments.TryGetValue(victim, out var victimAssignment))
-                                    {
-                                        // Record which provider failed for the stalled segment (so retry uses different provider)
-                                        // Skip if ForcedProviderIndex is set - there's only one provider allowed, so exclusion is pointless
-                                        var stalledContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
-                                        var hasForcedProvider = stalledContext.DetailsObject?.ForcedProviderIndex.HasValue ?? false;
-                                        var failedProviderIndex = stalledContext.DetailsObject?.CurrentProviderIndex;
-                                        if (failedProviderIndex.HasValue && !hasForcedProvider)
-                                        {
-                                            Log.Debug("[BufferedStream] Recording failed provider {ProviderIndex} for segment {Index}",
-                                                failedProviderIndex.Value, nextNeeded);
-                                            _failedProvidersPerSegment.AddOrUpdate(
-                                                nextNeeded,
-                                                _ => new HashSet<int> { failedProviderIndex.Value },
-                                                (_, set) => { lock (set) { set.Add(failedProviderIndex.Value); } return set; }
-                                            );
-                                        }
-
-                                        Log.Debug("[BufferedStream] STRAGGLER DETECTED: Segment {Index} running for {Duration}s. Preempting Segment {Victim} to race.", nextNeeded, duration.TotalSeconds, victim);
-
-                                        // Cancel victim to free up its worker
-                                        victimAssignment.Cts.Cancel();
-
-                                        // Re-queue victim (high priority to avoid starvation)
-                                        _ = urgentChannel.Writer.WriteAsync((victim, segmentIds[victim]), ct);
-
-                                        // Race the needed segment
-                                        _ = urgentChannel.Writer.WriteAsync((nextNeeded, segmentIds[nextNeeded]), ct);
-                                        racingIndices.TryAdd(nextNeeded, true);
-                                    }
+                                    Log.Debug("[BufferedStream] STRAGGLER: Segment {Index} on provider {Provider} running {Duration:F1}s but already excluded {Excluded}/{Total} providers. Letting it continue.",
+                                        segmentIndex, failedProviderIndex.Value, duration.TotalSeconds, currentExclusions, totalProviders);
+                                    continue; // Don't cancel, don't exclude - let it finish
                                 }
-                                else
-                                {
-                                    // No victim available (stalled segment is highest index)
-                                    // Cancel the stalled worker itself to free its connection
-                                    // Record which provider failed (so retry uses different provider)
-                                    // Skip if ForcedProviderIndex is set - there's only one provider allowed, so exclusion is pointless
-                                    var stalledContext = assignment.Cts.Token.GetContext<ConnectionUsageContext>();
-                                    var hasForcedProvider = stalledContext.DetailsObject?.ForcedProviderIndex.HasValue ?? false;
-                                    var failedProviderIndex = stalledContext.DetailsObject?.CurrentProviderIndex;
-                                    if (failedProviderIndex.HasValue && !hasForcedProvider)
-                                    {
-                                        Log.Debug("[BufferedStream] Recording failed provider {ProviderIndex} for segment {Index}",
-                                            failedProviderIndex.Value, nextNeeded);
-                                        _failedProvidersPerSegment.AddOrUpdate(
-                                            nextNeeded,
-                                            _ => new HashSet<int> { failedProviderIndex.Value },
-                                            (_, set) => { lock (set) { set.Add(failedProviderIndex.Value); } return set; }
-                                        );
-                                    }
 
-                                    Log.Debug("[BufferedStream] STRAGGLER SELF-CANCEL: Segment {Index} running for {Duration}s. Cancelling stalled worker and queueing for retry.", nextNeeded, duration.TotalSeconds);
-                                    assignment.Cts.Cancel();
-                                    _ = urgentChannel.Writer.WriteAsync((nextNeeded, segmentIds[nextNeeded]), ct);
-                                    racingIndices.TryAdd(nextNeeded, true);
+                                Log.Debug("[BufferedStream] STRAGGLER: Segment {Index} on provider {Provider} running {Duration:F1}s (timeout: {Timeout:F1}s, avg: {Avg:F0}ms). Cancelling and retrying on different provider.",
+                                    segmentIndex, failedProviderIndex.Value, duration.TotalSeconds, stragglerTimeoutSeconds, fetchCount > 0 ? (double)fetchTimeMs / fetchCount : 0);
+
+                                _failedProvidersPerSegment.AddOrUpdate(
+                                    segmentIndex,
+                                    _ => new HashSet<int> { failedProviderIndex.Value },
+                                    (_, set) => { lock (set) { set.Add(failedProviderIndex.Value); } return set; }
+                                );
+
+                                // Record straggler for per-stream cooldown (soft deprioritization for all segments)
+                                RecordProviderStraggler(failedProviderIndex.Value, totalProviders);
+
+                                // Record straggler failure to affinity service so slow providers are deprioritized globally
+                                var affinityKey = workerContext.AffinityKey;
+                                if (!string.IsNullOrEmpty(affinityKey))
+                                {
+                                    multiClient?.AffinityService?.RecordFailure(affinityKey, failedProviderIndex.Value);
                                 }
                             }
+                            else
+                            {
+                                Log.Debug("[BufferedStream] STRAGGLER: Segment {Index} running {Duration:F1}s (timeout: {Timeout:F1}s). Cancelling and retrying.",
+                                    segmentIndex, duration.TotalSeconds, stragglerTimeoutSeconds);
+                            }
+
+                            // Cancel the stalled worker
+                            assignment.Cts.Cancel();
+
+                            // Re-queue the segment (high priority)
+                            _ = urgentChannel.Writer.WriteAsync((segmentIndex, segmentIds[segmentIndex]), ct);
+                            racingIndices.TryAdd(segmentIndex, true);
                         }
                     }
                 }
@@ -598,38 +724,37 @@ public class BufferedSegmentStream : Stream
                             // Get the base context - we share the DetailsObject to ensure stats updates
                             // (BufferedCount, CurrentBytePosition, etc.) are visible to the connection pool
                             var baseContext = ct.GetContext<ConnectionUsageContext>();
-                            var baseDetails = baseContext.DetailsObject;
 
-                            // Set per-job exclusions directly on the shared DetailsObject
-                            // This is safe because provider selection reads these at the start of each operation
-                            if (baseDetails != null)
+                            // Build per-job exclusion list from straggler failures
+                            // Use struct-based exclusions to avoid race conditions between workers
+                            HashSet<int>? jobExcludedProviders = null;
+                            if (_failedProvidersPerSegment.TryGetValue(job.index, out var failed))
                             {
-                                if (_failedProvidersPerSegment.TryGetValue(job.index, out var failed))
+                                lock (failed)
                                 {
-                                    HashSet<int>? excludedProviders;
-                                    lock (failed)
+                                    if (failed.Count > 0)
                                     {
-                                        excludedProviders = new HashSet<int>(failed);
-                                    }
-                                    if (excludedProviders.Count > 0)
-                                    {
-                                        Log.Debug("[BufferedStream] Segment {Index} excluding providers [{Providers}] due to previous straggler failures",
-                                            job.index, string.Join(",", excludedProviders));
-                                        baseDetails.ExcludedProviderIndices = excludedProviders;
-                                    }
-                                    else
-                                    {
-                                        baseDetails.ExcludedProviderIndices = null;
+                                        jobExcludedProviders = new HashSet<int>(failed);
                                     }
                                 }
-                                else
+                                if (jobExcludedProviders != null)
                                 {
-                                    baseDetails.ExcludedProviderIndices = null;
+                                    Log.Debug("[BufferedStream] Segment {Index} excluding providers [{Providers}] due to previous straggler failures",
+                                        job.index, string.Join(",", jobExcludedProviders));
                                 }
                             }
 
-                            // Use the base context directly so stats updates are visible to connection tracking
-                            using var _scope = jobCts.Token.SetScopedContext(baseContext);
+                            // Get providers in cooldown for soft deprioritization
+                            var cooldownProviders = GetProvidersInCooldown();
+                            var hasCooldown = cooldownProviders.Count > 0;
+
+                            // Create a per-job context with exclusions and cooldown providers
+                            // This prevents race conditions where workers overwrite each other's exclusions
+                            var jobContext = baseContext.WithProviderAdjustments(
+                                jobExcludedProviders,
+                                hasCooldown ? cooldownProviders : null
+                            );
+                            using var _scope = jobCts.Token.SetScopedContext(jobContext);
 
                             var assignment = (DateTimeOffset.UtcNow, jobCts, workerId);
                             
@@ -674,22 +799,35 @@ public class BufferedSegmentStream : Stream
 
                                 try
                                 {
-                                    Stopwatch? fetchWatch = null;
-                                    if (EnableDetailedTiming) fetchWatch = Stopwatch.StartNew();
+                                    // Always track fetch time for dynamic straggler timeout
+                                    var fetchWatch = Stopwatch.StartNew();
 
                                     var segmentData = await FetchSegmentWithRetryAsync(job.index, job.segmentId, segmentIds, client, jobCts.Token).ConfigureAwait(false);
 
-                                    if (EnableDetailedTiming && fetchWatch != null)
+                                    fetchWatch.Stop();
+                                    var fetchTimeMs = fetchWatch.ElapsedMilliseconds;
+
+                                    if (EnableDetailedTiming)
                                     {
-                                        Interlocked.Add(ref _totalFetchTimeMs, fetchWatch.ElapsedMilliseconds);
-                                        Interlocked.Add(ref s_totalFetchTimeMs, fetchWatch.ElapsedMilliseconds);
+                                        Interlocked.Add(ref _totalFetchTimeMs, fetchTimeMs);
+                                        Interlocked.Add(ref s_totalFetchTimeMs, fetchTimeMs);
                                     }
 
                                     // Store result directly to slot (lock-free, first write wins)
                                     var existingSlot = Interlocked.CompareExchange(ref segmentSlots[job.index], segmentData, null);
                                     if (existingSlot == null)
                                     {
-                                        // We won the race - update stats
+                                        // We won the race - update stats for dynamic straggler timeout
+                                        Interlocked.Add(ref _successfulFetchTimeMs, fetchTimeMs);
+                                        Interlocked.Increment(ref _successfulFetchCount);
+
+                                        // Record provider success for per-stream scoring
+                                        var successProviderIndex = jobContext.DetailsObject?.CurrentProviderIndex;
+                                        if (successProviderIndex.HasValue)
+                                        {
+                                            RecordProviderSuccess(successProviderIndex.Value);
+                                        }
+
                                         // Update max fetched using lock-free compare-exchange
                                         int currentMax;
                                         do
@@ -805,26 +943,30 @@ public class BufferedSegmentStream : Stream
         var jobName = _usageContext?.DetailsObject?.Text ?? "Unknown";
         var fetchStartTime = Stopwatch.StartNew();
 
-        // Track providers that failed for this segment to exclude on retries
-        var excludedProviders = new HashSet<int>();
-        var baseDetails = _usageContext?.DetailsObject;
+        // Get initial exclusions from context (set by worker for straggler retries)
+        var baseContext = ct.GetContext<ConnectionUsageContext>();
+        var initialExclusions = baseContext.ExcludedProviderIndices;
+
+        // Track providers that failed for this segment to exclude on retries (within this method)
+        var retryExclusions = new HashSet<int>();
 
         for (int attempt = 0; attempt < maxRetries; attempt++)
         {
             // Exponential backoff: 0s, 1s, 2s, 4s
             if (attempt > 0)
             {
+                var allExclusions = MergeExclusions(initialExclusions, retryExclusions);
                 var delaySeconds = Math.Pow(2, attempt - 1);
                 Log.Warning("[BufferedStream] RETRY: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, Waiting {Delay}s before retry, ExcludingProviders=[{ExcludedProviders}]",
-                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, delaySeconds, string.Join(",", excludedProviders));
+                    jobName, index, segmentIds.Length, segmentId, attempt + 1, maxRetries, delaySeconds, string.Join(",", allExclusions));
                 await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct).ConfigureAwait(false);
             }
 
-            // Set excluded providers before each attempt (including first attempt for straggler re-retries)
-            if (baseDetails != null)
-            {
-                baseDetails.ExcludedProviderIndices = excludedProviders.Count > 0 ? excludedProviders : null;
-            }
+            // Merge straggler exclusions with retry-specific exclusions
+            var excludedProviders = MergeExclusions(initialExclusions, retryExclusions);
+
+            // Create a scoped context with the combined exclusions (struct-based, no race condition)
+            using var retryScope = ct.SetScopedContext(baseContext.WithExcludedProviders(excludedProviders));
 
             Stream? stream = null;
             try
@@ -946,12 +1088,6 @@ public class BufferedSegmentStream : Stream
                         } while (initial != computed && Interlocked.CompareExchange(ref _lastSuccessfulSegmentSize, computed, initial) != initial);
                     }
 
-                    // Clean up provider exclusions before returning
-                    if (baseDetails != null)
-                    {
-                        baseDetails.ExcludedProviderIndices = null;
-                    }
-
                     return new PooledSegmentData(segmentId, buffer, totalRead);
                 }
                 catch
@@ -967,10 +1103,10 @@ public class BufferedSegmentStream : Stream
                 lastException = ex;
 
                 // Track which provider failed so we exclude it on retry
-                var failedProviderIndex = baseDetails?.CurrentProviderIndex;
+                var failedProviderIndex = baseContext.DetailsObject?.CurrentProviderIndex;
                 if (failedProviderIndex.HasValue)
                 {
-                    excludedProviders.Add(failedProviderIndex.Value);
+                    retryExclusions.Add(failedProviderIndex.Value);
                 }
 
                 Log.Warning("[BufferedStream] CORRUPTION DETECTED: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, FailedProvider={FailedProvider}: {Message}",
@@ -998,10 +1134,10 @@ public class BufferedSegmentStream : Stream
                 lastException = ex;
 
                 // Track which provider failed so we exclude it on retry
-                var failedProviderIndex = baseDetails?.CurrentProviderIndex;
+                var failedProviderIndex = baseContext.DetailsObject?.CurrentProviderIndex;
                 if (failedProviderIndex.HasValue)
                 {
-                    excludedProviders.Add(failedProviderIndex.Value);
+                    retryExclusions.Add(failedProviderIndex.Value);
                 }
 
                 Log.Warning("[BufferedStream] ERROR FETCHING SEGMENT: Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}), Attempt={Attempt}/{MaxRetries}, FailedProvider={FailedProvider}: {Message}",
@@ -1019,12 +1155,6 @@ public class BufferedSegmentStream : Stream
         var disableGracefulDegradation = _usageContext?.DetailsObject?.DisableGracefulDegradation ?? false;
         if (disableGracefulDegradation)
         {
-            // Clean up provider exclusions before throwing
-            if (baseDetails != null)
-            {
-                baseDetails.ExcludedProviderIndices = null;
-            }
-
             var reason = lastException?.Message ?? "Unknown error after all retries exhausted";
             Log.Warning("[BufferedStream] PERMANENT FAILURE (graceful degradation disabled): Job={Job}, Segment={SegmentIndex}/{TotalSegments} (ID: {SegmentId}) failed after {MaxRetries} attempts. Throwing exception. Last error: {LastError}",
                 jobName, index, segmentIds.Length, segmentId, maxRetries, reason);
@@ -1079,21 +1209,9 @@ public class BufferedSegmentStream : Stream
         }
         else
         {
-            // Clean up provider exclusions before throwing
-            if (baseDetails != null)
-            {
-                baseDetails.ExcludedProviderIndices = null;
-            }
-
             // If we don't know the exact size, we cannot safely zero-fill without corrupting the file structure (shifting offsets).
             // It is safer to fail hard here.
             throw new InvalidDataException($"Cannot perform graceful degradation for segment {index} ({segmentId}) because segment size is unknown. Failing stream to prevent structural corruption.");
-        }
-
-        // Clean up provider exclusions before returning
-        if (baseDetails != null)
-        {
-            baseDetails.ExcludedProviderIndices = null;
         }
 
         // Return a zero-filled segment of correct size
@@ -1308,6 +1426,93 @@ public class BufferedSegmentStream : Stream
             }
             return null;
         }
+    }
+
+    /// <summary>
+    /// Merges two exclusion sets into a single HashSet.
+    /// Returns null if both inputs are null or empty.
+    /// </summary>
+    private static HashSet<int>? MergeExclusions(HashSet<int>? initial, HashSet<int>? additional)
+    {
+        if ((initial == null || initial.Count == 0) && (additional == null || additional.Count == 0))
+            return null;
+
+        var result = new HashSet<int>();
+        if (initial != null) result.UnionWith(initial);
+        if (additional != null) result.UnionWith(additional);
+        return result.Count > 0 ? result : null;
+    }
+
+    /// <summary>
+    /// Records a successful fetch for a provider, improving its score.
+    /// </summary>
+    private void RecordProviderSuccess(int providerIndex)
+    {
+        var score = _providerScores.GetOrAdd(providerIndex, _ => new ProviderStreamScore());
+        score.RecordSuccess();
+    }
+
+    /// <summary>
+    /// Records a straggler/failure for a provider, potentially putting it in cooldown.
+    /// Uses rolling window for success rate and weighted failure tracking for cooldown duration.
+    /// </summary>
+    private void RecordProviderStraggler(int providerIndex, int totalProviders)
+    {
+        var score = _providerScores.GetOrAdd(providerIndex, _ => new ProviderStreamScore());
+        score.RecordFailure();
+
+        // Calculate cooldown based on failure weight (decays slowly) and rolling window failure rate
+        // FailureWeight: each failure adds +2, each success subtracts -1 (min 0)
+        // This makes failures "sticky" - they don't immediately reset on success
+        var failureRate = 1.0 - score.SuccessRate;
+        var failureWeight = score.FailureWeight;
+
+        // AGGRESSIVE COOLDOWN FORMULA with sticky failure weight:
+        // Base: 15s (was 10s)
+        // + failureWeight * 3s - each failure adds 6s (2 weight * 3s), each success removes 3s
+        // + failureRate * 20s - so 10% failure rate adds 2s, 50% adds 10s
+        // Max: 60s (was 45s)
+        //
+        // Example cooldowns (assuming 30 ops in window):
+        // - First failure (weight=2, ~3% rate): 15 + 6 + 0.6 = 21.6s
+        // - Second failure before decay (weight=4): 15 + 12 + 1.2 = 28.2s
+        // - After 1 success (weight=3): 15 + 9 + 1.0 = 25s (still significant!)
+        // - After 5 failures, 3 successes (weight=7): 15 + 21 + 3 = 39s
+        var cooldownSeconds = Math.Min(60, 15 + (failureWeight * 3) + (failureRate * 20));
+
+        // Check how many providers are currently in cooldown
+        var providersInCooldown = _providerScores.Count(kvp => kvp.Value.IsInCooldown);
+
+        // Never put more than (totalProviders - 1) in cooldown at once
+        if (providersInCooldown >= totalProviders - 1)
+        {
+            // This provider gets a shorter cooldown (5s) since others are already cooling
+            // Still want some penalty, but can't fully deprioritize
+            cooldownSeconds = 5;
+            Log.Debug("[BufferedStream] Provider {Provider} limited to 5s cooldown - {InCooldown}/{Total} providers already cooling down",
+                providerIndex, providersInCooldown, totalProviders);
+        }
+
+        score.CooldownUntil = DateTimeOffset.UtcNow.AddSeconds(cooldownSeconds);
+
+        Log.Debug("[BufferedStream] Provider {Provider} enters {Cooldown:F1}s cooldown. Rolling window: {Rate:P0} ({Failures}/{Window}), FailureWeight: {Weight}",
+            providerIndex, cooldownSeconds, score.SuccessRate, score.WindowFailures, score.WindowOperations, failureWeight);
+    }
+
+    /// <summary>
+    /// Gets the set of providers currently in cooldown (for soft deprioritization, not exclusion).
+    /// </summary>
+    private HashSet<int> GetProvidersInCooldown()
+    {
+        var result = new HashSet<int>();
+        foreach (var kvp in _providerScores)
+        {
+            if (kvp.Value.IsInCooldown)
+            {
+                result.Add(kvp.Key);
+            }
+        }
+        return result;
     }
 
 }

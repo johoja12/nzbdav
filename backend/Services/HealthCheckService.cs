@@ -183,43 +183,47 @@ public class HealthCheckService
             var isTimeout = e.Message.Contains("timed out", StringComparison.OrdinalIgnoreCase);
             if (isTimeout)
             {
-                Log.Error($"[HealthCheck] Unexpected error processing {itemInfo.Name}: {e.Message}");
+                // Timeout exceptions should be handled like OperationCanceledException timeouts
+                // Don't mark as corrupted - just reschedule for retry
+                Log.Warning($"[HealthCheck] Timeout error processing {itemInfo.Name}: {e.Message}. Will retry later.");
+                await HandleTimeout(itemInfo.Id, itemInfo.Name, itemInfo.Path, itemInfo.NextHealthCheck == DateTimeOffset.MinValue);
             }
             else
             {
                 Log.Error(e, $"[HealthCheck] Unexpected error processing {itemInfo.Name}");
-            }
 
-            try
-            {
-                // Mark as failed in DB to prevent infinite loops and allow filtering
-                await using var errorContext = new DavDatabaseContext();
-                var utcNow = DateTimeOffset.UtcNow;
-                
-                await errorContext.Items
-                    .Where(x => x.Id == itemInfo.Id)
-                    .ExecuteUpdateAsync(setters => setters
-                        .SetProperty(p => p.NextHealthCheck, utcNow.AddDays(1)) // Retry in 24h
-                        .SetProperty(p => p.LastHealthCheck, utcNow)
-                        .SetProperty(p => p.IsCorrupted, true)
-                        .SetProperty(p => p.CorruptionReason, e.Message))
-                    .ConfigureAwait(false);
-
-                errorContext.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+                try
                 {
-                    Id = Guid.NewGuid(),
-                    DavItemId = itemInfo.Id,
-                    Path = itemInfo.Path,
-                    CreatedAt = utcNow,
-                    Result = HealthCheckResult.HealthResult.Unhealthy,
-                    RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
-                    Message = $"Unexpected error: {e.Message}"
-                }));
-                await errorContext.SaveChangesAsync().ConfigureAwait(false);
-            }
-            catch (Exception dbEx)
-            {
-                Log.Error(dbEx, "[HealthCheck] Failed to save error status to database.");
+                    // Mark as failed in DB to prevent infinite loops and allow filtering
+                    // Only non-timeout errors mark as corrupted - timeouts are transient provider issues
+                    await using var errorContext = new DavDatabaseContext();
+                    var utcNow = DateTimeOffset.UtcNow;
+
+                    await errorContext.Items
+                        .Where(x => x.Id == itemInfo.Id)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(p => p.NextHealthCheck, utcNow.AddDays(1)) // Retry in 24h
+                            .SetProperty(p => p.LastHealthCheck, utcNow)
+                            .SetProperty(p => p.IsCorrupted, true)
+                            .SetProperty(p => p.CorruptionReason, e.Message))
+                        .ConfigureAwait(false);
+
+                    errorContext.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+                    {
+                        Id = Guid.NewGuid(),
+                        DavItemId = itemInfo.Id,
+                        Path = itemInfo.Path,
+                        CreatedAt = utcNow,
+                        Result = HealthCheckResult.HealthResult.Unhealthy,
+                        RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+                        Message = $"Unexpected error: {e.Message}"
+                    }));
+                    await errorContext.SaveChangesAsync().ConfigureAwait(false);
+                }
+                catch (Exception dbEx)
+                {
+                    Log.Error(dbEx, "[HealthCheck] Failed to save error status to database.");
+                }
             }
         }
         finally

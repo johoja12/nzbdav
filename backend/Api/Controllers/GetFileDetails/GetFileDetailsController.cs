@@ -120,12 +120,26 @@ public class GetFileDetailsController(
             .Select((p, index) => new { Index = index, Host = p.Host })
             .ToDictionary(x => x.Index, x => x.Host);
 
-        // Get missing article count
-        var missingArticleCount = await dbClient.Ctx.MissingArticleEvents
+        // Get missing article count from summaries (events aren't stored to save space)
+        // Only show count for BLOCKING missing articles (missing across ALL providers)
+        // Non-blocking errors (missing on some providers but available on others) are not critical
+        var missingArticleSummary = await dbClient.Ctx.MissingArticleSummaries
             .AsNoTracking()
-            .Where(x => x.Filename == davItem.Name)
-            .CountAsync()
+            .FirstOrDefaultAsync(x => x.DavItemId == itemGuid)
             .ConfigureAwait(false);
+
+        // Only count as missing if blocking (missing across all providers)
+        // TotalEvents is divided by provider count to estimate unique blocking segments
+        var missingArticleCount = 0;
+        if (missingArticleSummary?.HasBlockingMissingArticles == true)
+        {
+            var providerCount = usenetConfig.Providers.Count;
+            // Estimate unique blocking segments: TotalEvents / providerCount (since each blocking segment
+            // generates one error per provider)
+            missingArticleCount = providerCount > 0
+                ? (int)Math.Ceiling((double)missingArticleSummary.TotalEvents / providerCount)
+                : missingArticleSummary.TotalEvents;
+        }
 
         // Get latest health check result
         var latestHealthCheck = await dbClient.Ctx.HealthCheckResults

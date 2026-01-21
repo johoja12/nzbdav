@@ -77,6 +77,10 @@ public class NzbProviderAffinityService
         var providerStats = jobStats.GetOrAdd(providerIndex, _ => new ProviderPerformance());
 
         providerStats.RecordFailure();
+
+        // Log straggler failures to help diagnose slow provider issues
+        Log.Debug("[NzbProviderAffinity] RecordFailure: Job={JobName}, Provider={ProviderIndex}, TotalFailures={Failures}",
+            jobName, providerIndex, providerStats.FailedSegments);
     }
 
     /// <summary>
@@ -181,27 +185,27 @@ public class NzbProviderAffinityService
                 if (hasBenchmarkData && _benchmarkSpeeds.TryGetValue(kvp.Key, out var benchmark))
                 {
                     // With benchmark data:
-                    // - Success rate: 15% weight
-                    // - Benchmark speed: 55% weight (higher priority - more reliable measurement)
-                    // - Segment speed: 30% weight (real-world performance for this specific NZB)
+                    // - Success rate: 40% weight (high priority - unreliable providers are unusable)
+                    // - Benchmark speed: 35% weight (reliable speed measurement)
+                    // - Segment speed: 25% weight (real-world performance for this specific NZB)
                     var normalizedBenchmarkSpeed = (benchmark.SpeedMbps / maxBenchmarkSpeed) * 100.0;
-                    score = (normalizedSuccessRate * 0.15) +
-                            (normalizedBenchmarkSpeed * 0.55) +
-                            (normalizedSegmentSpeed * 0.30);
+                    score = (normalizedSuccessRate * 0.40) +
+                            (normalizedBenchmarkSpeed * 0.35) +
+                            (normalizedSegmentSpeed * 0.25);
                 }
                 else if (hasBenchmarkData)
                 {
                     // Provider has no benchmark but others do - penalize slightly
                     // Use segment speed only with reduced weight
-                    score = (normalizedSuccessRate * 0.20) +
-                            (normalizedSegmentSpeed * 0.50); // Max score of 70 without benchmark
+                    score = (normalizedSuccessRate * 0.45) +
+                            (normalizedSegmentSpeed * 0.35); // Max score of 80 without benchmark
                 }
                 else
                 {
-                    // No benchmark data available for any provider - use original formula
-                    // Success rate: 20% weight, Segment speed: 80% weight
-                    score = (normalizedSuccessRate * 0.20) +
-                            (normalizedSegmentSpeed * 0.80);
+                    // No benchmark data available for any provider
+                    // Success rate: 45% weight (reliability is crucial), Segment speed: 55% weight
+                    score = (normalizedSuccessRate * 0.45) +
+                            (normalizedSegmentSpeed * 0.55);
                 }
 
                 return new
@@ -293,6 +297,40 @@ public class NzbProviderAffinityService
             usageType, deferReason, pooledProviderCount);
 
         return true;
+    }
+
+    /// <summary>
+    /// Get providers with low success rate (< threshold%) for a specific job.
+    /// Requires minimum sample size to avoid penalizing providers with insufficient data.
+    /// </summary>
+    /// <param name="jobName">The NZB/job name (affinity key)</param>
+    /// <param name="minSamples">Minimum total segments (success + failures) required</param>
+    /// <param name="successRateThreshold">Success rate below this is considered "low" (default 30%)</param>
+    /// <returns>Set of provider indices with low success rate</returns>
+    public HashSet<int> GetLowSuccessRateProviders(string jobName, int minSamples = 10, double successRateThreshold = 30.0)
+    {
+        var result = new HashSet<int>();
+
+        if (string.IsNullOrEmpty(jobName)) return result;
+        if (!_stats.TryGetValue(jobName, out var jobStats)) return result;
+
+        foreach (var (providerIndex, performance) in jobStats)
+        {
+            var totalSegments = performance.SuccessfulSegments + performance.FailedSegments;
+
+            // Skip providers without enough data
+            if (totalSegments < minSamples) continue;
+
+            // Check if success rate is below threshold
+            if (performance.SuccessRate < successRateThreshold)
+            {
+                result.Add(providerIndex);
+                Log.Debug("[NzbProviderAffinity] Provider {Index} marked as low success rate for job '{Job}': {Rate:F1}% ({Success}/{Total})",
+                    providerIndex, jobName, performance.SuccessRate, performance.SuccessfulSegments, totalSegments);
+            }
+        }
+
+        return result;
     }
 
     /// <summary>

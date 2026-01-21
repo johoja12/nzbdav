@@ -36,9 +36,18 @@ public static class FetchFirstSegmentsStep
         var startTime = DateTimeOffset.UtcNow;
         var completed = 0;
         var failed = 0;
-        
+
         // Track critical failures to ensure they aren't masked by cancellations
         var criticalFailure = (Exception?)null;
+
+        // Shared cancellation token source that gets cancelled on critical failure
+        // This allows all running tasks to be cancelled immediately instead of waiting for individual timeouts
+        using var criticalFailureCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        // CRITICAL: Propagate the ConnectionUsageContext from parent token to linked token
+        // Without this, the context lookup by token instance fails and operations get "Unknown" type
+        var parentContext = cancellationToken.GetContext<ConnectionUsageContext>();
+        using var _contextScope = criticalFailureCts.Token.SetScopedContext(parentContext);
 
         var result = await nzbFiles
             .Where(x => x.Segments.Count > 0)
@@ -47,13 +56,14 @@ public static class FetchFirstSegmentsStep
                 try
                 {
                     // If we already hit a critical failure (like Missing Articles), don't start new work
-                    if (criticalFailure != null) 
+                    if (criticalFailure != null)
                     {
                         // Throw OperationCanceledException to skip this item gracefully in the pipeline
                         throw new OperationCanceledException("Skipping due to critical failure in another task");
                     }
 
-                    var fileResult = await FetchFirstSegment(x, client, configManager, cancellationToken).ConfigureAwait(false);
+                    // Use the shared critical failure token so all tasks get cancelled together
+                    var fileResult = await FetchFirstSegment(x, client, configManager, criticalFailureCts.Token).ConfigureAwait(false);
                     var duration = (DateTimeOffset.UtcNow - fileStart).TotalSeconds;
                     
                     var current = Interlocked.Increment(ref completed);
@@ -70,6 +80,11 @@ public static class FetchFirstSegmentsStep
                     Interlocked.CompareExchange(ref criticalFailure, ex, null);
                     Interlocked.Increment(ref failed);
                     logger.Warning("Failed to fetch first segment for {FileName}: {Error}", x.FileName, ex.Message);
+
+                    // Cancel all other running tasks immediately to avoid waiting for their individual timeouts
+                    try { await criticalFailureCts.CancelAsync().ConfigureAwait(false); }
+                    catch { /* Ignore if already cancelled */ }
+
                     throw;
                 }
                 catch (Exception ex)
@@ -169,6 +184,15 @@ public static class FetchFirstSegmentsStep
             {
                 try {
                     smartSizes = await client.AnalyzeNzbAsync(nzbFile.GetSegmentIds(), 1, null, timeoutCts.Token, useSmartAnalysis: true).ConfigureAwait(false);
+                } catch (UsenetArticleNotFoundException ex) {
+                    // For important files (video, audio, etc.), missing articles during analysis should fail the import
+                    if (FilenameUtil.IsImportantFileType(nzbFile.FileName))
+                    {
+                        Log.Error("[FetchFirst] Critical file {FileName} has missing articles during analysis. Failing job: {Message}",
+                            nzbFile.FileName, ex.Message);
+                        throw;
+                    }
+                    logger.Warning("Smart analysis failed for {FileName}: {Message}", nzbFile.FileName, ex.Message);
                 } catch (Exception ex) {
                     logger.Warning("Smart analysis failed for {FileName}: {Message}", nzbFile.FileName, ex.Message);
                 }

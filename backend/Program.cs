@@ -57,10 +57,12 @@ class Program
 
         // Log build version to verify correct build is running
         Log.Warning("═══════════════════════════════════════════════════════════════");
-        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-18-NZBTESTER-FIX");
-        Log.Warning("  FEATURE: NzbFromDbTester connection limit fix (5x speedup)");
-        Log.Warning("  - Sets queue/healthcheck connections to 0 during streaming tests");
-        Log.Warning("  - Ensures GlobalOperationLimiter allocates all slots to streaming");
+        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-21-STICKY-COOLDOWN");
+        Log.Warning("  FEATURE: Sticky failure weight cooldown (v3)");
+        Log.Warning("  - Rolling window (last 30 ops) for success rate");
+        Log.Warning("  - Failure weight: +2 per fail, -1 per success (sticky!)");
+        Log.Warning("  - Cooldown: 15s base + weight*3s + rate*20s (max 60s)");
+        Log.Warning("  - Cooldown = soft deprioritization, not hard exclusion");
         Log.Warning("═══════════════════════════════════════════════════════════════");
 
         // Run Arr History Tester if requested

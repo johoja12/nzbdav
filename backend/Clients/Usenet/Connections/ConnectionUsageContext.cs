@@ -60,7 +60,7 @@ public class ConnectionUsageDetails
 public readonly struct ConnectionUsageContext
 {
     public ConnectionUsageType UsageType { get; }
-    
+
     private readonly ConnectionUsageDetails? _detailsObj;
     private readonly string? _detailsStr;
 
@@ -70,21 +70,63 @@ public readonly struct ConnectionUsageContext
     public bool IsBackup => _detailsObj?.IsBackup ?? false;
     public bool IsSecondary => _detailsObj?.IsSecondary ?? false;
     public bool IsImported => _detailsObj?.IsImported ?? false;
-    
+
     public ConnectionUsageDetails? DetailsObject => _detailsObj;
+
+    /// <summary>
+    /// Provider indices to exclude from selection for THIS operation only.
+    /// Stored on the struct (not DetailsObject) to avoid race conditions between concurrent workers.
+    /// Each worker gets its own copy of the struct with its own exclusions.
+    /// </summary>
+    public HashSet<int>? ExcludedProviderIndices { get; init; }
+
+    /// <summary>
+    /// Provider indices to deprioritize (use as last resort) for THIS operation.
+    /// Unlike excluded providers, these can still be used if all other providers fail.
+    /// Used by per-stream cooldown system to temporarily reduce load on slow providers.
+    /// </summary>
+    public HashSet<int>? DeprioritizedProviderIndices { get; init; }
 
     public ConnectionUsageContext(ConnectionUsageType usageType, string? details = null)
     {
         UsageType = usageType;
         _detailsStr = details;
         _detailsObj = null;
+        ExcludedProviderIndices = null;
     }
-    
+
     public ConnectionUsageContext(ConnectionUsageType usageType, ConnectionUsageDetails details)
     {
         UsageType = usageType;
         _detailsObj = details;
         _detailsStr = null;
+        ExcludedProviderIndices = null;
+    }
+
+    /// <summary>
+    /// Creates a copy of this context with the specified excluded providers.
+    /// Used by BufferedSegmentStream to create per-segment exclusion lists without race conditions.
+    /// </summary>
+    public ConnectionUsageContext WithExcludedProviders(HashSet<int>? excluded)
+    {
+        return new ConnectionUsageContext(UsageType, _detailsObj!)
+        {
+            ExcludedProviderIndices = excluded,
+            DeprioritizedProviderIndices = DeprioritizedProviderIndices
+        };
+    }
+
+    /// <summary>
+    /// Creates a copy of this context with both excluded and deprioritized providers.
+    /// Used by BufferedSegmentStream for combined straggler exclusion + cooldown deprioritization.
+    /// </summary>
+    public ConnectionUsageContext WithProviderAdjustments(HashSet<int>? excluded, HashSet<int>? deprioritized)
+    {
+        return new ConnectionUsageContext(UsageType, _detailsObj!)
+        {
+            ExcludedProviderIndices = excluded,
+            DeprioritizedProviderIndices = deprioritized
+        };
     }
 
     public override string ToString()

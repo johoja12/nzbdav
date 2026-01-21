@@ -3,6 +3,8 @@ import { type Dispatch, type SetStateAction, useState, useCallback, useEffect, u
 import { Button } from "react-bootstrap";
 import { receiveMessage } from "~/utils/websocket-util";
 import { useToast } from "~/context/ToastContext";
+import { FileDetailsModal } from "~/routes/health/components/file-details-modal/file-details-modal";
+import type { FileDetails } from "~/types/backend";
 
 const usenetConnectionsTopic = {'cxs': 'state', 'bp': 'state'};
 
@@ -144,6 +146,11 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
     const [lastBenchmarkFileId, setLastBenchmarkFileId] = useState<string | null>(null);
     const [lastBenchmarkFileName, setLastBenchmarkFileName] = useState<string | null>(null);
     const [reuseSameFile, setReuseSameFile] = useState(false);
+
+    // File details modal state
+    const [showFileDetailsModal, setShowFileDetailsModal] = useState(false);
+    const [selectedFileDetails, setSelectedFileDetails] = useState<FileDetails | null>(null);
+    const [loadingFileDetails, setLoadingFileDetails] = useState(false);
 
     // handlers
     const handleStatsEnableChange = useCallback((checked: boolean) => {
@@ -393,6 +400,33 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         }
         // Note: Don't set isRunningBenchmark=false here - WebSocket handles completion
     }, [addToast, fetchBenchmarkHistory, selectedProviderIndices, includeLoadBalanced, reuseSameFile, lastBenchmarkFileId]);
+
+    const handleFileClick = useCallback(async (fileId: string | undefined) => {
+        if (!fileId) return;
+
+        setShowFileDetailsModal(true);
+        setLoadingFileDetails(true);
+        setSelectedFileDetails(null);
+
+        try {
+            const response = await fetch(`/api/file-details/${fileId}`);
+            if (response.ok) {
+                const details = await response.json();
+                setSelectedFileDetails(details);
+            } else {
+                console.error('Failed to fetch file details:', await response.text());
+            }
+        } catch (error) {
+            console.error('Error fetching file details:', error);
+        } finally {
+            setLoadingFileDetails(false);
+        }
+    }, []);
+
+    const handleHideFileDetailsModal = useCallback(() => {
+        setShowFileDetailsModal(false);
+        setSelectedFileDetails(null);
+    }, []);
 
     // effects
     useEffect(() => {
@@ -917,7 +951,22 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                 {/* Results Table */}
                                 <div className={styles["benchmark-results"]}>
                                     <div style={{ fontSize: '0.9rem', marginBottom: '8px' }}>
-                                        <strong>Test File:</strong> {displayRun.testFileName}
+                                        <strong>Test File:</strong>{' '}
+                                        {displayRun.isCurrent && benchmarkResults?.testFileId ? (
+                                            <span
+                                                onClick={() => handleFileClick(benchmarkResults.testFileId)}
+                                                style={{
+                                                    color: 'var(--bs-primary)',
+                                                    cursor: 'pointer',
+                                                    textDecoration: 'underline'
+                                                }}
+                                                title="Click to view file details"
+                                            >
+                                                {displayRun.testFileName}
+                                            </span>
+                                        ) : (
+                                            displayRun.testFileName
+                                        )}
                                         <span style={{ color: 'var(--bs-secondary-color)', marginLeft: '8px' }}>
                                             ({(displayRun.testFileSize || 0) / 1024 / 1024 / 1024 > 1
                                                 ? `${((displayRun.testFileSize || 0) / 1024 / 1024 / 1024).toFixed(2)} GB`
@@ -993,6 +1042,13 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 provider={editingIndex !== null ? providerConfig.Providers[editingIndex] : null}
                 onClose={handleCloseModal}
                 onSave={handleSaveProvider}
+            />
+
+            <FileDetailsModal
+                show={showFileDetailsModal}
+                onHide={handleHideFileDetailsModal}
+                fileDetails={selectedFileDetails}
+                loading={loadingFileDetails}
             />
         </div>
     );

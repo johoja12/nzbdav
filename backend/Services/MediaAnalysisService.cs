@@ -53,23 +53,25 @@ public class MediaAnalysisService(
         {
              Log.Warning("[MediaAnalysis] ffprobe failed or returned empty result for {Path}", fullPath);
              item.MediaInfo = "{\"error\": \"ffprobe failed (file may be corrupt or incomplete)\", \"streams\": []}";
-             item.IsCorrupted = true;
-             item.CorruptionReason = "Media analysis (ffprobe) failed - possible corrupt file.";
+             // Don't set IsCorrupted here - ffprobe failure could be transient/network issue
+             // Only BufferedSegmentStream (graceful degradation) should mark files as corrupted
+             // since that confirms failure across ALL providers after retries
              analysisResult = MediaAnalysisResult.Failed;
         }
         else if (result.Contains("\"error\":"))
         {
              Log.Warning("[MediaAnalysis] ffprobe reported error for {Path}: {Result}", fullPath, result);
              item.MediaInfo = result;
-             item.IsCorrupted = true;
-             item.CorruptionReason = "Media analysis reported stream errors.";
+             // Don't set IsCorrupted here - stream errors during analysis could be transient
+             // Only BufferedSegmentStream (graceful degradation) confirms critical corruption
              analysisResult = MediaAnalysisResult.Failed;
         }
         else
         {
              item.MediaInfo = result;
-             item.IsCorrupted = false;
-             item.CorruptionReason = null;
+             // Don't clear IsCorrupted here - a successful ffprobe doesn't mean the file
+             // wasn't previously marked as corrupted due to graceful degradation
+             // The corruption flag should only be managed by HealthCheckService after repair
              analysisResult = MediaAnalysisResult.Success;
         }
 

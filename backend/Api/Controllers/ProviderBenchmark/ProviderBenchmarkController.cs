@@ -63,38 +63,7 @@ public class ProviderBenchmarkController(
     [HttpPost]
     public async Task<IActionResult> RunBenchmarkPost([FromBody] ProviderBenchmarkRequest? request)
     {
-        // Find a test file - use provided FileId or find a random one
-        Guid? fileId = request?.FileId;
-        (string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)? testFile;
-
-        if (fileId.HasValue)
-        {
-            // User requested a specific file - try to get it
-            testFile = await GetFileById(fileId.Value).ConfigureAwait(false);
-            if (testFile == null)
-            {
-                Log.Warning("[Benchmark] Requested file {FileId} not found, falling back to random selection", fileId.Value);
-                testFile = await FindRandomLargeFile().ConfigureAwait(false);
-            }
-        }
-        else
-        {
-            testFile = await FindRandomLargeFile().ConfigureAwait(false);
-        }
-
-        if (testFile == null)
-        {
-            Log.Warning("[Benchmark] No suitable test file found (>= {MinSize} GB)", MinFileSizeBytes / 1024.0 / 1024.0 / 1024.0);
-            return Ok(new ProviderBenchmarkResponse
-            {
-                Status = false,
-                Error = "No NZB file >= 1GB found in database. Please import a larger file first."
-            });
-        }
-
-        var (fileName, segmentIds, fileSize, testFileId, segmentSizes) = testFile.Value;
-
-        // Get all providers
+        // Get all providers first (needed for availability check)
         var allProviders = usenetClient.GetProviderInfo().ToList();
 
         // Filter providers based on request
@@ -121,6 +90,77 @@ public class ProviderBenchmarkController(
                 Error = "No providers selected for testing."
             });
         }
+
+        // Find a test file - use provided FileId or find a random one
+        // If a file's first segment is unavailable on ALL providers, try a different file
+        const int MaxFileAttempts = 5;
+        Guid? fileId = request?.FileId;
+        (string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)? testFile = null;
+        var triedFileIds = new HashSet<Guid>();
+
+        using var availabilityCts = new CancellationTokenSource(TimeSpan.FromMinutes(2)); // Overall timeout for file selection
+
+        for (int attempt = 0; attempt < MaxFileAttempts; attempt++)
+        {
+            if (fileId.HasValue && attempt == 0)
+            {
+                // User requested a specific file - try to get it first
+                testFile = await GetFileById(fileId.Value).ConfigureAwait(false);
+                if (testFile == null)
+                {
+                    Log.Warning("[Benchmark] Requested file {FileId} not found, falling back to random selection", fileId.Value);
+                }
+                else
+                {
+                    triedFileIds.Add(testFile.Value.FileId);
+                }
+            }
+
+            if (testFile == null)
+            {
+                testFile = await FindRandomLargeFile(triedFileIds).ConfigureAwait(false);
+            }
+
+            if (testFile == null)
+            {
+                Log.Warning("[Benchmark] No more suitable test files found (attempt {Attempt}/{Max})", attempt + 1, MaxFileAttempts);
+                break;
+            }
+
+            // Check if this file is available on ALL selected providers
+            var (allAvailable, availableProviders, unavailableProviders) = await CheckFileAvailabilityOnProviders(
+                testFile.Value.SegmentIds,
+                testFile.Value.FileName,
+                providers,
+                availabilityCts.Token
+            ).ConfigureAwait(false);
+
+            if (allAvailable)
+            {
+                Log.Information("[Benchmark] File {FileName} available on all {Count} providers (attempt {Attempt})",
+                    testFile.Value.FileName, providers.Count, attempt + 1);
+                break;
+            }
+
+            // File not available on all providers - try a different one
+            Log.Warning("[Benchmark] File {FileName} only available on {Available}/{Total} providers (attempt {Attempt}/{Max}), trying another",
+                testFile.Value.FileName, availableProviders.Count, providers.Count, attempt + 1, MaxFileAttempts);
+            triedFileIds.Add(testFile.Value.FileId);
+            testFile = null;
+        }
+
+        if (testFile == null)
+        {
+            Log.Warning("[Benchmark] No suitable test file found after {Attempts} attempts (>= {MinSize} GB, available on all providers)",
+                MaxFileAttempts, MinFileSizeBytes / 1024.0 / 1024.0 / 1024.0);
+            return Ok(new ProviderBenchmarkResponse
+            {
+                Status = false,
+                Error = $"No NZB file >= 1GB found that is available on all {providers.Count} selected provider(s) after trying {triedFileIds.Count} file(s)."
+            });
+        }
+
+        var (fileName, segmentIds, fileSize, testFileId, segmentSizes) = testFile.Value;
 
         var runId = Guid.NewGuid();
         var createdAt = DateTimeOffset.UtcNow;
@@ -423,7 +463,7 @@ public class ProviderBenchmarkController(
         return null;
     }
 
-    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> FindRandomLargeFile()
+    private async Task<(string FileName, string[] SegmentIds, long FileSize, Guid FileId, long[]? SegmentSizes)?> FindRandomLargeFile(HashSet<Guid>? excludeIds = null)
     {
         // Get IDs with missing article errors (these should be avoided if possible)
         var idsWithErrors = await dbContext.MissingArticleSummaries
@@ -433,6 +473,7 @@ public class ProviderBenchmarkController(
             .ConfigureAwait(false);
 
         var idsWithErrorsSet = idsWithErrors.ToHashSet();
+        excludeIds ??= [];
 
         // Try to find a file with no errors first, using a fast limited query
         // Query each type with LIMIT to avoid loading all files into memory
@@ -448,9 +489,9 @@ public class ProviderBenchmarkController(
             .ToListAsync()
             .ConfigureAwait(false);
 
-        // Filter for files with segments and prefer those without errors
+        // Filter for files with segments, exclude already-tried files, and prefer those without errors
         var validNzb = nzbCandidates
-            .Where(f => f.SegmentIds.Length > 0)
+            .Where(f => f.SegmentIds.Length > 0 && !excludeIds.Contains(f.Id))
             .OrderBy(f => idsWithErrorsSet.Contains(f.Id) ? 1 : 0)
             .ThenBy(_ => Random.Shared.Next())
             .FirstOrDefault();
@@ -474,6 +515,7 @@ public class ProviderBenchmarkController(
             .ConfigureAwait(false);
 
         var validMultipart = multipartCandidates
+            .Where(f => !excludeIds.Contains(f.Id))
             .OrderBy(f => idsWithErrorsSet.Contains(f.Id) ? 1 : 0)
             .ThenBy(_ => Random.Shared.Next())
             .FirstOrDefault();
@@ -497,6 +539,7 @@ public class ProviderBenchmarkController(
             .ConfigureAwait(false);
 
         var validRar = rarCandidates
+            .Where(f => !excludeIds.Contains(f.Id))
             .OrderBy(f => idsWithErrorsSet.Contains(f.Id) ? 1 : 0)
             .ThenBy(_ => Random.Shared.Next())
             .FirstOrDefault();
@@ -776,5 +819,86 @@ public class ProviderBenchmarkController(
         {
             Log.Debug("[Benchmark] Failed to send WebSocket progress: {Message}", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Check if the first segment of a file is available on ALL selected providers.
+    /// Tests each provider individually to ensure the benchmark will work for all of them.
+    /// </summary>
+    private async Task<(bool AllAvailable, List<int> AvailableProviders, List<int> UnavailableProviders)> CheckFileAvailabilityOnProviders(
+        string[] segmentIds,
+        string fileName,
+        List<(int Index, string Host, string Type, int MaxConnections)> providers,
+        CancellationToken ct)
+    {
+        if (segmentIds.Length == 0)
+            return (false, [], providers.Select(p => p.Index).ToList());
+
+        var firstSegmentId = segmentIds[0];
+        var availableProviders = new List<int>();
+        var unavailableProviders = new List<int>();
+
+        Log.Information("[Benchmark] Checking availability of {FileName} on {Count} providers...", fileName, providers.Count);
+
+        // Test each provider in parallel for speed
+        var tasks = providers.Select(async provider =>
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(15)); // 15 second timeout per provider
+
+                var usageContext = new ConnectionUsageContext(
+                    ConnectionUsageType.Streaming,
+                    new ConnectionUsageDetails
+                    {
+                        Text = $"Benchmark availability check: {fileName}",
+                        JobName = fileName,
+                        ForcedProviderIndex = provider.Index,
+                        DisableGracefulDegradation = true
+                    }
+                );
+
+                await using var stream = usenetClient.GetFileStream(
+                    [firstSegmentId],
+                    500 * 1024, // Assume ~500KB for first segment
+                    1,
+                    usageContext,
+                    useBufferedStreaming: false
+                );
+
+                var buffer = new byte[1024];
+                var read = await stream.ReadAsync(buffer, cts.Token).ConfigureAwait(false);
+
+                return (provider.Index, provider.Host, Available: read > 0);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("[Benchmark] Provider {Host} availability check failed: {Error}", provider.Host, ex.Message);
+                return (provider.Index, provider.Host, Available: false);
+            }
+        }).ToList();
+
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        foreach (var result in results)
+        {
+            if (result.Available)
+            {
+                availableProviders.Add(result.Index);
+                Log.Debug("[Benchmark] Provider {Host}: first segment available", result.Host);
+            }
+            else
+            {
+                unavailableProviders.Add(result.Index);
+                Log.Debug("[Benchmark] Provider {Host}: first segment NOT available", result.Host);
+            }
+        }
+
+        var allAvailable = unavailableProviders.Count == 0;
+        Log.Information("[Benchmark] Availability check for {FileName}: {Available}/{Total} providers have the file",
+            fileName, availableProviders.Count, providers.Count);
+
+        return (allAvailable, availableProviders, unavailableProviders);
     }
 }
