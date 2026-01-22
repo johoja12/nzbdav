@@ -33,6 +33,7 @@ public class MultiConnectionNntpClient : INntpClient
     private readonly int _providerIndex;
     private readonly string _host;
     private readonly int _operationTimeoutSeconds;
+    private readonly int _connectionAcquireTimeoutSeconds;
     private DateTimeOffset _lastActivity = DateTimeOffset.UtcNow;
     private DateTimeOffset _lastLatencyRecordTime = DateTimeOffset.MinValue;
     private readonly Timer? _latencyMonitorTimer;
@@ -50,7 +51,8 @@ public class MultiConnectionNntpClient : INntpClient
         ProviderErrorService? providerErrorService = null,
         int providerIndex = -1,
         string? host = null,
-        int operationTimeoutSeconds = 90,
+        int operationTimeoutSeconds = 30,
+        int connectionAcquireTimeoutSeconds = 60,
         ConfigManager? configManager = null)
     {
         _connectionPool = connectionPool;
@@ -61,6 +63,7 @@ public class MultiConnectionNntpClient : INntpClient
         _providerIndex = providerIndex;
         _host = host ?? $"Provider {providerIndex}";
         _operationTimeoutSeconds = operationTimeoutSeconds;
+        _connectionAcquireTimeoutSeconds = connectionAcquireTimeoutSeconds;
         _logger = configManager != null ? new ComponentLogger(LogComponents.Usenet, configManager) : null;
 
         if (_providerIndex >= 0 && _bandwidthService != null && type != ProviderType.Disabled)
@@ -69,20 +72,30 @@ public class MultiConnectionNntpClient : INntpClient
         }
     }
 
-    private int GetDynamicTimeout()
+    /// <summary>
+    /// Gets the dynamic timeout for NNTP operations (actual network I/O).
+    /// This does NOT include time waiting for a connection from the pool.
+    /// </summary>
+    private int GetOperationTimeout()
     {
         var latency = _bandwidthService?.GetAverageLatency(_providerIndex) ?? 0;
         if (latency <= 0) return _operationTimeoutSeconds * 1000;
 
-        // Formula: Latency * 4, clamped between MinTimeout and ConfiguredTimeout
-        // Minimum of 60s because:
-        // - Connection pool contention can add significant wait time
-        // - Health checks with many concurrent segments need headroom
-        // - Occasional slow segments shouldn't fail the entire operation
-        // - 45s was too aggressive causing premature timeouts during benchmarks
-        const int MinTimeoutMs = 60000;
+        // Formula: Latency * 4, clamped between 10s minimum and ConfiguredTimeout
+        // Minimum of 10s because even fast operations need some buffer for jitter
+        // Pool wait time is now handled separately, so we can use a lower minimum
+        const int MinTimeoutMs = 10000;
         var dynamic = latency * 4;
         return (int)Math.Clamp(dynamic, MinTimeoutMs, _operationTimeoutSeconds * 1000);
+    }
+
+    /// <summary>
+    /// Gets the timeout for acquiring a connection from the pool.
+    /// This is separate from operation timeout to allow longer waits when pool is busy.
+    /// </summary>
+    private int GetConnectionAcquireTimeout()
+    {
+        return _connectionAcquireTimeoutSeconds * 1000;
     }
 
     private void CheckLatency(object? state)
@@ -203,19 +216,8 @@ public class MultiConnectionNntpClient : INntpClient
             globalPermit = await _globalLimiter.AcquirePermitAsync(usageType, cancellationToken).ConfigureAwait(false);
         }
 
-        // Create timeout cancellation token that will cancel after N seconds
-        // IMPORTANT: Create this BEFORE acquiring connection lock so timeout includes lock wait time
-        var currentTimeoutMs = GetDynamicTimeout();
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(currentTimeoutMs));
-
-        // Propagate the connection usage context to the new linked token
+        // Propagate the connection usage context
         var originalUsageContext = cancellationToken.GetContext<ConnectionUsageContext>();
-        IDisposable? timeoutContextScope = null;
-        if (originalUsageContext.UsageType != ConnectionUsageType.Unknown)
-        {
-            timeoutContextScope = timeoutCts.Token.SetScopedContext(originalUsageContext);
-        }
 
         ConnectionLock<INntpClient>? connectionLock = null;
         bool success = false;
@@ -223,7 +225,43 @@ public class MultiConnectionNntpClient : INntpClient
 
         try
         {
-            connectionLock = await _connectionPool.GetConnectionLockAsync(timeoutCts.Token).ConfigureAwait(false);
+            // PHASE 1: Connection Acquisition (separate timeout)
+            // This allows longer waits when pool is busy without penalizing the actual download
+            var acquireTimeoutMs = GetConnectionAcquireTimeout();
+            using var acquireCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            acquireCts.CancelAfter(TimeSpan.FromMilliseconds(acquireTimeoutMs));
+
+            IDisposable? acquireContextScope = null;
+            if (originalUsageContext.UsageType != ConnectionUsageType.Unknown)
+            {
+                acquireContextScope = acquireCts.Token.SetScopedContext(originalUsageContext);
+            }
+
+            try
+            {
+                connectionLock = await _connectionPool.GetConnectionLockAsync(acquireCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && acquireCts.IsCancellationRequested)
+            {
+                _logger?.Debug("Connection acquire timed out after {Timeout:F1}s on provider {Host}", acquireTimeoutMs / 1000.0, _host);
+                throw new TimeoutException($"Connection acquire timed out after {acquireTimeoutMs / 1000.0:F1}s on provider {_host}");
+            }
+            finally
+            {
+                acquireContextScope?.Dispose();
+            }
+
+            // PHASE 2: NNTP Operation (separate, shorter timeout)
+            // Now that we have a connection, use the operation timeout for actual network I/O
+            var operationTimeoutMs = GetOperationTimeout();
+            using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            operationCts.CancelAfter(TimeSpan.FromMilliseconds(operationTimeoutMs));
+
+            IDisposable? operationContextScope = null;
+            if (originalUsageContext.UsageType != ConnectionUsageType.Unknown)
+            {
+                operationContextScope = operationCts.Token.SetScopedContext(originalUsageContext);
+            }
 
             try
             {
@@ -232,13 +270,13 @@ public class MultiConnectionNntpClient : INntpClient
                 YencHeaderStream stream;
                 try
                 {
-                    // Pass the timeout token to the task - it will flow through to NNTP I/O operations
-                    stream = await task(connectionLock.Connection, timeoutCts.Token).ConfigureAwait(false);
+                    // Pass the operation timeout token to the task
+                    stream = await task(connectionLock.Connection, operationCts.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && operationCts.IsCancellationRequested)
                 {
-                    _logger?.Debug("Stream operation timed out after {Timeout:F1} seconds on provider {Host}", currentTimeoutMs / 1000.0, _host);
-                    throw new TimeoutException($"GetSegmentStream operation timed out after {currentTimeoutMs / 1000.0:F1} seconds on provider {_host}");
+                    _logger?.Debug("NNTP operation timed out after {Timeout:F1}s on provider {Host}", operationTimeoutMs / 1000.0, _host);
+                    throw new TimeoutException($"NNTP operation timed out after {operationTimeoutMs / 1000.0:F1}s on provider {_host}");
                 }
 
                 // Record latency metrics
@@ -257,10 +295,11 @@ public class MultiConnectionNntpClient : INntpClient
                                             try
                                             {
                                                 // Wait for connection to be ready before returning to pool
-                                                // Use a short timeout (500ms) to allow quick draining of small/nearly-complete segments.
-                                                // If it takes longer, we kill the connection to ensure UI responsiveness during seeking.
+                                                // Use 2s timeout to allow draining of partially-downloaded segments.
+                                                // This saves reconnection overhead (TCP+SSL+auth) when stragglers are cancelled.
+                                                // 2s is still fast enough for UI responsiveness during seeking.
                                                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
-                                                timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(500));
+                                                timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(2000));
                                                 await connectionLock.Connection.WaitForReady(timeoutCts.Token).ConfigureAwait(false);
                                             }
                                             catch (IOException ex)
@@ -321,37 +360,35 @@ public class MultiConnectionNntpClient : INntpClient
                 _logger?.Warning("[RunStreamWithConnection] Final retry failed. Retries: {Retries}, Provider: {Host}, Exception: {Exception}", retries, _host, ex.GetType().Name);
                 throw;
             }
+            finally
+            {
+                operationContextScope?.Dispose();
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        finally
         {
-            var elapsedSeconds = startTime.Elapsed.TotalSeconds;
-            _logger?.Debug("[{Host}] Operation timed out after {ElapsedSeconds:F1}s (limit: {Timeout:F1}s). This usually indicates slow Usenet server response or connection lock contention.", _host, elapsedSeconds, currentTimeoutMs / 1000.0);
-            throw new TimeoutException($"[{_host}] GetSegmentStream operation timed out after {elapsedSeconds:F1} seconds (limit: {currentTimeoutMs / 1000.0:F1}s)");
-        }
-                    finally
-                    {
-                        _lastActivity = DateTimeOffset.UtcNow;
-                        timeoutContextScope?.Dispose(); // Dispose the scoped context if it was created
-                        // If we failed to create the stream (success == false), we must cleanup here.
-                        if (!success)
+            _lastActivity = DateTimeOffset.UtcNow;
+            // If we failed to create the stream (success == false), we must cleanup here.
+            if (!success)
+            {
+                if (connectionLock != null)
+                {
+                    _ = connectionLock.Connection.WaitForReady(SigtermUtil.GetCancellationToken())
+                        .ContinueWith(t =>
                         {
-                            if (connectionLock != null)
+                            if (t.IsFaulted)
                             {
-                                _ = connectionLock.Connection.WaitForReady(SigtermUtil.GetCancellationToken())
-                                    .ContinueWith(t =>
-                                    {
-                                        if (t.IsFaulted)
-                                        {
-                                            _logger?.Debug("Background connection cleanup failed: {Message}", t.Exception?.InnerException?.Message);
-                                            connectionLock.Replace();
-                                        }
-                                        connectionLock.Dispose();
-                                    });
+                                _logger?.Debug("Background connection cleanup failed: {Message}", t.Exception?.InnerException?.Message);
+                                connectionLock.Replace();
                             }
-                        }
-                        // Always dispose permit in finally block of the current recursive call
-                        globalPermit?.Dispose();
-                    }    }
+                            connectionLock.Dispose();
+                        });
+                }
+                // Dispose permit if not already disposed during retry
+                globalPermit?.Dispose();
+            }
+        }
+    }
 
     private async Task<T> RunWithConnection<T>
     (
@@ -370,24 +407,51 @@ public class MultiConnectionNntpClient : INntpClient
             globalPermit = await _globalLimiter.AcquirePermitAsync(usageType, cancellationToken).ConfigureAwait(false);
         }
 
-        // Create timeout cancellation token that will cancel after N seconds
-        // IMPORTANT: Create this BEFORE acquiring connection lock so timeout includes lock wait time
-        var currentTimeoutMs = GetDynamicTimeout();
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(currentTimeoutMs));
-
-        // Propagate the connection usage context to the new linked token
+        // Propagate the connection usage context
         var originalUsageContext = cancellationToken.GetContext<ConnectionUsageContext>();
-        IDisposable? timeoutContextScope = null;
-        if (originalUsageContext.UsageType != ConnectionUsageType.Unknown)
-        {
-            timeoutContextScope = timeoutCts.Token.SetScopedContext(originalUsageContext);
-        }
 
         var startTime = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var connectionLock = await _connectionPool.GetConnectionLockAsync(timeoutCts.Token).ConfigureAwait(false);
+            // PHASE 1: Connection Acquisition (separate timeout)
+            // This allows longer waits when pool is busy without penalizing the actual operation
+            var acquireTimeoutMs = GetConnectionAcquireTimeout();
+            using var acquireCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            acquireCts.CancelAfter(TimeSpan.FromMilliseconds(acquireTimeoutMs));
+
+            IDisposable? acquireContextScope = null;
+            if (originalUsageContext.UsageType != ConnectionUsageType.Unknown)
+            {
+                acquireContextScope = acquireCts.Token.SetScopedContext(originalUsageContext);
+            }
+
+            ConnectionLock<INntpClient> connectionLock;
+            try
+            {
+                connectionLock = await _connectionPool.GetConnectionLockAsync(acquireCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && acquireCts.IsCancellationRequested)
+            {
+                _logger?.Debug("Connection acquire timed out after {Timeout:F1}s on provider {Host}", acquireTimeoutMs / 1000.0, _host);
+                throw new TimeoutException($"Connection acquire timed out after {acquireTimeoutMs / 1000.0:F1}s on provider {_host}");
+            }
+            finally
+            {
+                acquireContextScope?.Dispose();
+            }
+
+            // PHASE 2: NNTP Operation (separate, shorter timeout)
+            // Now that we have a connection, use the operation timeout for actual network I/O
+            var operationTimeoutMs = GetOperationTimeout();
+            using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            operationCts.CancelAfter(TimeSpan.FromMilliseconds(operationTimeoutMs));
+
+            IDisposable? operationContextScope = null;
+            if (originalUsageContext.UsageType != ConnectionUsageType.Unknown)
+            {
+                operationContextScope = operationCts.Token.SetScopedContext(originalUsageContext);
+            }
+
             var isDisposed = false;
             try
             {
@@ -395,13 +459,13 @@ public class MultiConnectionNntpClient : INntpClient
                 T result;
                 try
                 {
-                    // Pass the timeout token to the task - it will flow through to NNTP I/O operations
-                    result = await task(connectionLock.Connection, timeoutCts.Token).ConfigureAwait(false);
+                    // Pass the operation timeout token to the task
+                    result = await task(connectionLock.Connection, operationCts.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && operationCts.IsCancellationRequested)
                 {
-                    _logger?.Debug("RunWithConnection: Operation timed out after {Timeout:F1} seconds on provider {Host}", currentTimeoutMs / 1000.0, _host);
-                    throw new TimeoutException($"NNTP operation timed out after {currentTimeoutMs / 1000.0:F1} seconds on provider {_host}");
+                    _logger?.Debug("NNTP operation timed out after {Timeout:F1}s on provider {Host}", operationTimeoutMs / 1000.0, _host);
+                    throw new TimeoutException($"NNTP operation timed out after {operationTimeoutMs / 1000.0:F1}s on provider {_host}");
                 }
 
                 // Record latency metrics
@@ -426,7 +490,7 @@ public class MultiConnectionNntpClient : INntpClient
                 if (retries > 0)
                 {
                     _logger?.Debug("[RunWithConnection] Retrying operation. Retries left: {Retries}, Provider: {Host}, Exception: {Exception}", retries, _host, ex.GetType().Name);
-                    
+
                     // Release permit before retrying to prevent deadlock (holding permit while waiting for new one)
                     globalPermit?.Dispose();
                     globalPermit = null;
@@ -441,6 +505,7 @@ public class MultiConnectionNntpClient : INntpClient
             }
             finally
             {
+                operationContextScope?.Dispose();
                 // we only want to release the connection-lock once the underlying connection is ready again.
                 //
                 // ReSharper disable once MethodSupportsCancellation
@@ -459,16 +524,9 @@ public class MultiConnectionNntpClient : INntpClient
                         });
             }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
-        {
-            var elapsedSeconds = startTime.Elapsed.TotalSeconds;
-            _logger?.Debug("[{Host}] Operation timed out after {ElapsedSeconds:F1}s (limit: {Timeout:F1}s). This usually indicates slow Usenet server response or connection lock contention.", _host, elapsedSeconds, currentTimeoutMs / 1000.0);
-            throw new TimeoutException($"[{_host}] NNTP operation timed out after {elapsedSeconds:F1} seconds (limit: {currentTimeoutMs / 1000.0:F1}s)");
-        }
         finally
         {
             _lastActivity = DateTimeOffset.UtcNow;
-            timeoutContextScope?.Dispose(); // Dispose the scoped context if it was created
             // Release global permit
             globalPermit?.Dispose();
         }

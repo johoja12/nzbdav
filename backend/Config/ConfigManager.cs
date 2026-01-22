@@ -340,12 +340,30 @@ public class ConfigManager
         return (configValue != null ? bool.Parse(configValue) : defaultValue);
     }
 
+    /// <summary>
+    /// Timeout for NNTP network operations (segment download).
+    /// This does NOT include time waiting for a connection from the pool.
+    /// </summary>
     public int GetUsenetOperationTimeout()
     {
         return int.Parse(
             StringUtil.EmptyToNull(GetConfigValue("usenet.operation-timeout"))
             ?? StringUtil.EmptyToNull(Environment.GetEnvironmentVariable("USENET_OPERATION_TIMEOUT"))
-            ?? "60" // 60s default provides 3x safety margin over observed max read times (~17s)
+            ?? "30" // 30s default for actual NNTP I/O (now separate from pool wait)
+        );
+    }
+
+    /// <summary>
+    /// Timeout for acquiring a connection from the pool.
+    /// This is separate from the NNTP operation timeout to allow longer waits
+    /// when the pool is busy without penalizing the actual download operation.
+    /// </summary>
+    public int GetConnectionAcquireTimeout()
+    {
+        return int.Parse(
+            StringUtil.EmptyToNull(GetConfigValue("usenet.connection-acquire-timeout"))
+            ?? StringUtil.EmptyToNull(Environment.GetEnvironmentVariable("USENET_CONNECTION_ACQUIRE_TIMEOUT"))
+            ?? "60" // 60s default - pool contention can cause longer waits
         );
     }
 

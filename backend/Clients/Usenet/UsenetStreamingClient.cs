@@ -58,8 +58,9 @@ public class UsenetStreamingClient
         configManager.OnConfigChanged += (_, configEventArgs) =>
         {
             // if unrelated config changed, do nothing
-            if (!configEventArgs.ChangedConfig.TryGetValue("usenet.providers", out var rawConfig) && 
-                !configEventArgs.ChangedConfig.ContainsKey("usenet.operation-timeout")) return;
+            if (!configEventArgs.ChangedConfig.TryGetValue("usenet.providers", out var rawConfig) &&
+                !configEventArgs.ChangedConfig.ContainsKey("usenet.operation-timeout") &&
+                !configEventArgs.ChangedConfig.ContainsKey("usenet.connection-acquire-timeout")) return;
 
             // update the connection-pool according to the new config
             var newProviderConfig = configManager.GetUsenetProviderConfig();
@@ -463,6 +464,7 @@ public class UsenetStreamingClient
         var pooledSemaphore = new ExtendedSemaphoreSlim(effectivePoolSize, effectivePoolSize);
         
         var operationTimeout = _configManager.GetUsenetOperationTimeout();
+        var connectionAcquireTimeout = _configManager.GetConnectionAcquireTimeout();
 
         // Create ONE global operation limiter shared across ALL providers
         // Each operation type gets its own dedicated limit (not shared from a total budget)
@@ -484,7 +486,8 @@ public class UsenetStreamingClient
                 pooledSemaphore,
                 globalLimiter,
                 _providerErrorService,
-                operationTimeout
+                operationTimeout,
+                connectionAcquireTimeout
             ))
             .ToList();
         return new MultiProviderNntpClient(providerClients, _providerErrorService, _affinityService);
@@ -498,7 +501,8 @@ public class UsenetStreamingClient
         ExtendedSemaphoreSlim pooledSemaphore,
         GlobalOperationLimiter globalLimiter,
         ProviderErrorService providerErrorService,
-        int operationTimeout
+        int operationTimeout,
+        int connectionAcquireTimeout
     )
     {
         var connectionPool = CreateNewConnectionPool(
@@ -519,6 +523,7 @@ public class UsenetStreamingClient
             providerIndex,
             connectionDetails.Host,
             operationTimeout,
+            connectionAcquireTimeout,
             _configManager
         );
     }
