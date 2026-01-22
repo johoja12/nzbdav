@@ -3,7 +3,6 @@ import styles from "./route.module.css"
 import { Tabs, Tab, Button, Form } from "react-bootstrap"
 import { backendClient } from "~/clients/backend-client.server";
 import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet";
-import React from "react";
 import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } from "./sabnzbd/sabnzbd";
 import { isWebdavSettingsUpdated, isWebdavSettingsValid, WebdavSettings } from "./webdav/webdav";
 import { isArrsSettingsUpdated, isArrsSettingsValid, ArrsSettings } from "./arrs/arrs";
@@ -13,6 +12,7 @@ import { GeneralSettings, isGeneralSettingsUpdated } from "./general/general";
 import { DebugSettings } from "./debug/debug";
 import { IntegrationsSettings, isIntegrationsSettingsUpdated, isIntegrationsSettingsValid } from "./integrations/integrations";
 import { RcloneSettings } from "./rclone/rclone";
+import { useCallback, useState } from "react";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -29,7 +29,7 @@ const defaultConfig = {
     "api.manual-category": "uncategorized",
     "api.max-queue-connections": "",
     "api.ensure-importable-video": "true",
-    "api.ensure-article-existence": "false",
+    "api.ensure-article-existence-categories": "",
     "api.ignore-history-limit": "true",
     "api.download-file-blocklist": "*.nfo, *.par2, *.sfv, *sample.mkv",
     "api.duplicate-nzb-behavior": "increment",
@@ -99,11 +99,11 @@ type BodyProps = {
 
 function Body(props: BodyProps) {
     // stateful variables
-    const [config, setConfig] = React.useState(props.config);
-    const [newConfig, setNewConfig] = React.useState(config);
-    const [isSaving, setIsSaving] = React.useState(false);
-    const [isSaved, setIsSaved] = React.useState(false);
-    const [activeTab, setActiveTab] = React.useState('general');
+    const [config, setConfig] = useState(props.config);
+    const [newConfig, setNewConfig] = useState(config);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isSaved, setIsSaved] = useState(false);
+    const [activeTab, setActiveTab] = useState('general');
 
     // derived variables
     const isGeneralUpdated = isGeneralSettingsUpdated(config, newConfig);
@@ -138,12 +138,12 @@ function Body(props: BodyProps) {
     const isSaveButtonDisabled = saveButtonLabel !== "Save";
 
     // events
-    const onClear = React.useCallback(() => {
+    const onClear = useCallback(() => {
         setNewConfig(config);
         setIsSaved(false);
     }, [config, setNewConfig]);
 
-    const onSave = React.useCallback(async () => {
+    const onSave = useCallback(async () => {
         setIsSaving(true);
         setIsSaved(false);
         const response = await fetch("/settings/update", {
