@@ -534,11 +534,11 @@ public class BufferedSegmentStream : Stream
                                 // Record straggler for per-stream cooldown (soft deprioritization for all segments)
                                 RecordProviderStraggler(failedProviderIndex.Value, totalProviders);
 
-                                // Record straggler failure to affinity service so slow providers are deprioritized globally
+                                // Record straggler timeout to affinity service so slow providers are deprioritized globally
                                 var affinityKey = workerContext.AffinityKey;
                                 if (!string.IsNullOrEmpty(affinityKey))
                                 {
-                                    multiClient?.AffinityService?.RecordFailure(affinityKey, failedProviderIndex.Value);
+                                    multiClient?.AffinityService?.RecordTimeoutError(affinityKey, failedProviderIndex.Value);
                                 }
                             }
                             else

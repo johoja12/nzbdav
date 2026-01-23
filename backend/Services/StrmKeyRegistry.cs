@@ -1,93 +1,61 @@
-using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
+using NzbWebDAV.Api.Controllers.GetWebdavItem;
+using NzbWebDAV.Config;
 using Serilog;
 
 namespace NzbWebDAV.Services;
 
 /// <summary>
-/// Registry for tracking STRM file download keys.
-/// When an STRM file is generated, we register its downloadKey here.
-/// When a request comes in with a downloadKey, we can identify it as STRM playback.
+/// Service for detecting STRM file playback requests.
+/// Uses algorithmic validation - if a request uses a downloadKey generated with the strmKey,
+/// it originated from an STRM file. No registry needed, works for all existing STRM files.
 /// </summary>
 public class StrmKeyRegistry
 {
-    private readonly ConcurrentDictionary<string, StrmKeyInfo> _keys = new();
+    private readonly ConfigManager _configManager;
 
     public static StrmKeyRegistry? Instance { get; private set; }
 
-    public StrmKeyRegistry()
+    public StrmKeyRegistry(ConfigManager configManager)
     {
+        _configManager = configManager;
         Instance = this;
     }
 
     /// <summary>
-    /// Register a download key when an STRM file is generated
+    /// Check if a request is from STRM playback by validating the downloadKey.
+    /// STRM files use the strmKey for signing, while WebDAV uses webdavKey.
+    /// If the downloadKey validates with strmKey, it's STRM playback.
+    /// </summary>
+    public bool IsStrmPlayback(string? downloadKey, string? path)
+    {
+        if (string.IsNullOrEmpty(downloadKey) || string.IsNullOrEmpty(path))
+            return false;
+
+        var strmKey = _configManager.GetStrmKey();
+        if (string.IsNullOrEmpty(strmKey))
+            return false;
+
+        // Generate what the downloadKey SHOULD be if it was created with strmKey
+        var expectedKey = GetWebdavItemRequest.GenerateDownloadKey(strmKey, path);
+
+        var isStrm = downloadKey == expectedKey;
+        if (isStrm)
+        {
+            Log.Debug("[StrmKeyRegistry] STRM playback detected for path: {Path}", path);
+        }
+
+        return isStrm;
+    }
+
+    /// <summary>
+    /// Legacy method for compatibility - no longer registers, just logs.
+    /// STRM detection now uses algorithmic validation.
     /// </summary>
     public void Register(string downloadKey, Guid davItemId, string source, string filePath)
     {
-        var info = new StrmKeyInfo
-        {
-            DavItemId = davItemId,
-            Source = source,
-            FilePath = filePath,
-            CreatedAt = DateTime.UtcNow
-        };
-        _keys[downloadKey] = info;
-        Log.Debug("[StrmKeyRegistry] Registered key for {Source}: {FilePath}", source, filePath);
+        // No-op - algorithmic validation doesn't need registration
+        Log.Debug("[StrmKeyRegistry] STRM file created for {Source}: {FilePath}", source, filePath);
     }
-
-    /// <summary>
-    /// Look up information about a download key
-    /// </summary>
-    public StrmKeyInfo? Lookup(string downloadKey)
-    {
-        return _keys.TryGetValue(downloadKey, out var info) ? info : null;
-    }
-
-    /// <summary>
-    /// Check if a download key is for STRM playback
-    /// </summary>
-    public bool IsStrmPlayback(string? downloadKey)
-    {
-        return !string.IsNullOrEmpty(downloadKey) && _keys.ContainsKey(downloadKey);
-    }
-
-    /// <summary>
-    /// Get count of registered keys (for diagnostics)
-    /// </summary>
-    public int Count => _keys.Count;
-
-    /// <summary>
-    /// Clean up old keys (older than specified age)
-    /// </summary>
-    public int CleanupOldKeys(TimeSpan maxAge)
-    {
-        var cutoff = DateTime.UtcNow - maxAge;
-        var keysToRemove = _keys
-            .Where(kvp => kvp.Value.CreatedAt < cutoff)
-            .Select(kvp => kvp.Key)
-            .ToList();
-
-        foreach (var key in keysToRemove)
-        {
-            _keys.TryRemove(key, out _);
-        }
-
-        if (keysToRemove.Count > 0)
-        {
-            Log.Information("[StrmKeyRegistry] Cleaned up {Count} old keys", keysToRemove.Count);
-        }
-
-        return keysToRemove.Count;
-    }
-}
-
-/// <summary>
-/// Information about a registered STRM download key
-/// </summary>
-public record StrmKeyInfo
-{
-    public Guid DavItemId { get; init; }
-    public string Source { get; init; } = "";  // "Emby", "Jellyfin", etc.
-    public string FilePath { get; init; } = "";
-    public DateTime CreatedAt { get; init; }
 }

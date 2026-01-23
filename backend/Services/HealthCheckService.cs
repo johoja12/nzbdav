@@ -1,4 +1,5 @@
-﻿using NzbWebDAV.Clients.RadarrSonarr;
+﻿using NzbWebDAV.Clients;
+using NzbWebDAV.Clients.RadarrSonarr;
 using System.Collections.Concurrent;
 using System.Net.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -349,6 +350,53 @@ public class HealthCheckService
                     Result = HealthCheckResult.HealthResult.Skipped,
                     RepairStatus = HealthCheckResult.RepairAction.None,
                     Message = "Not mapped"
+                }));
+                await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
+                return;
+            }
+
+            // Check if file is fully cached in any Rclone instance
+            Log.Debug("[HealthCheck] Checking Rclone cache status for {Name} ({Id})...", davItem.Name, davItem.Id);
+            var cacheStatus = await CheckRcloneCacheStatusAsync(davItem, dbClient.Ctx, ct).ConfigureAwait(false);
+            Log.Debug("[HealthCheck] Cache status for {Name}: IsFullyCached={IsCached}, Instance={Instance}, Details={Details}",
+                davItem.Name, cacheStatus.IsFullyCached, cacheStatus.InstanceName ?? "none", cacheStatus.Details ?? "no cache info");
+
+            // Update cache state in database
+            davItem.LastCacheCheck = DateTimeOffset.UtcNow;
+            if (cacheStatus.IsFullyCached)
+            {
+                davItem.IsCached = true;
+                davItem.CachedBytes = cacheStatus.CachedBytes;
+                davItem.CachePercentage = cacheStatus.CachePercentage;
+                davItem.CachedInInstance = cacheStatus.InstanceName;
+            }
+            else
+            {
+                davItem.IsCached = false;
+                davItem.CachedBytes = 0;
+                davItem.CachePercentage = 0;
+                davItem.CachedInInstance = null;
+            }
+
+            if (cacheStatus.IsFullyCached)
+            {
+                Log.Information("[HealthCheck] Item {Name} ({Id}) is fully cached in Rclone ({Instance}). Skipping health check.",
+                    davItem.Name, davItem.Id, cacheStatus.InstanceName);
+
+                davItem.LastHealthCheck = DateTimeOffset.UtcNow;
+                davItem.NextHealthCheck = davItem.LastHealthCheck.Value.AddDays(1); // Reschedule for +1 day
+                davItem.IsCorrupted = false;
+                davItem.CorruptionReason = null;
+
+                dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+                {
+                    Id = Guid.NewGuid(),
+                    DavItemId = davItem.Id,
+                    Path = davItem.Path,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    Result = HealthCheckResult.HealthResult.Skipped,
+                    RepairStatus = HealthCheckResult.RepairAction.None,
+                    Message = $"Fully cached in Rclone ({cacheStatus.InstanceName}) - {cacheStatus.Details}"
                 }));
                 await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                 return;
@@ -848,5 +896,176 @@ public class HealthCheckService
         foreach (var segmentId in segmentIds)
             if (_missingSegmentIds.ContainsKey(segmentId))
                 throw new UsenetArticleNotFoundException(segmentId);
+    }
+
+    private record RcloneCacheCheckResult(bool IsFullyCached, string? InstanceName, string? Details, long CachedBytes = 0, int CachePercentage = 0);
+
+    private async Task<RcloneCacheCheckResult> CheckRcloneCacheStatusAsync(DavItem davItem, DavDatabaseContext db, CancellationToken ct)
+    {
+        try
+        {
+            // Get enabled Rclone instances
+            var instances = await db.RcloneInstances
+                .AsNoTracking()
+                .Where(i => i.IsEnabled)
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+
+            if (instances.Count == 0)
+                return new RcloneCacheCheckResult(false, null, "No Rclone instances configured");
+
+            // Build paths to check:
+            // 1. Content path: /content/sonarr/JobName/FileName.mkv (davItem.Path)
+            // 2. IDs path: .ids/9/6/1/b/0/961b00d8-556d-4072-9e22-bda197ee68fc
+            var idStr = davItem.Id.ToString();
+            var idsPath = ".ids/" + string.Join("/", idStr.Take(5).Select(c => c.ToString())) + "/" + idStr;
+            var contentPath = davItem.Path.TrimStart('/');
+            var expectedSize = davItem.FileSize ?? 0;
+
+            var checkedInstances = new List<string>();
+
+            foreach (var instance in instances)
+            {
+                try
+                {
+                    // First, check VFS cache directory directly if configured (most reliable for fully cached files)
+                    if (!string.IsNullOrEmpty(instance.VfsCachePath))
+                    {
+                        var cacheResult = CheckVfsCacheDirectory(instance, idsPath, contentPath, expectedSize);
+                        if (cacheResult != null)
+                        {
+                            if (cacheResult.Value.isFullyCached)
+                            {
+                                return new RcloneCacheCheckResult(true, instance.Name, cacheResult.Value.details, cacheResult.Value.cachedBytes, cacheResult.Value.percentage);
+                            }
+                            checkedInstances.Add($"{instance.Name}: {cacheResult.Value.details}");
+                            continue; // Found in cache dir, skip API check
+                        }
+                    }
+
+                    // Fall back to vfs/transfers API (shows active/recent files)
+                    using var client = new RcloneClient(instance);
+                    var transfers = await client.GetVfsTransfersAsync().ConfigureAwait(false);
+
+                    if (transfers?.Transfers == null)
+                    {
+                        checkedInstances.Add($"{instance.Name}: not in cache (no active transfers)");
+                        continue;
+                    }
+
+                    // Look for the file in transfers - check both content path and .ids path
+                    var transfer = transfers.Transfers.FirstOrDefault(t =>
+                    {
+                        var name = t.Name;
+                        // Check content path (e.g., /content/sonarr/JobName/File.mkv)
+                        if (name.Contains(contentPath) || name.EndsWith(davItem.Name))
+                            return true;
+                        // Check .ids path (e.g., /.ids/9/6/1/b/0/uuid)
+                        if (name.Contains(idsPath) || name.EndsWith(idStr))
+                            return true;
+                        return false;
+                    });
+
+                    if (transfer != null)
+                    {
+                        var cacheInfo = $"{transfer.CachePercentage}% cached ({FormatBytes(transfer.CacheBytes)}/{FormatBytes(transfer.Size)})";
+                        if (transfer.CachePercentage >= 100)
+                        {
+                            return new RcloneCacheCheckResult(true, instance.Name, cacheInfo, transfer.CacheBytes, transfer.CachePercentage);
+                        }
+                        checkedInstances.Add($"{instance.Name}: {cacheInfo}");
+                    }
+                    else
+                    {
+                        checkedInstances.Add($"{instance.Name}: not in cache");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("[HealthCheck] Failed to query cache status from {Instance}: {Error}",
+                        instance.Name, ex.Message);
+                    checkedInstances.Add($"{instance.Name}: error ({ex.Message})");
+                }
+            }
+
+            return new RcloneCacheCheckResult(false, null, string.Join("; ", checkedInstances));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[HealthCheck] Failed to check Rclone cache status");
+            return new RcloneCacheCheckResult(false, null, $"Error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Check if file exists in Rclone VFS cache directory.
+    /// Cache structure: {VfsCachePath}/vfs/{remote}/{path}
+    /// Uses sparse file detection to accurately determine actual cached bytes.
+    /// </summary>
+    private (bool isFullyCached, string details, long cachedBytes, int percentage)? CheckVfsCacheDirectory(
+        RcloneInstance instance, string idsPath, string contentPath, long expectedSize)
+    {
+        try
+        {
+            var vfsCachePath = instance.VfsCachePath!;
+            var remoteName = instance.RemoteName.TrimEnd(':');
+
+            // Check both possible cache paths
+            var possiblePaths = new[]
+            {
+                // .ids path: {VfsCachePath}/vfs/{remote}/.ids/9/6/1/b/0/uuid
+                Path.Combine(vfsCachePath, "vfs", remoteName, idsPath),
+                // Content path: {VfsCachePath}/vfs/{remote}/{contentPath}
+                Path.Combine(vfsCachePath, "vfs", remoteName, contentPath),
+                // Alternative structure without 'vfs' subdirectory
+                Path.Combine(vfsCachePath, remoteName, idsPath),
+                Path.Combine(vfsCachePath, remoteName, contentPath),
+            };
+
+            foreach (var cachePath in possiblePaths)
+            {
+                if (File.Exists(cachePath))
+                {
+                    // Use sparse file detection to get actual cached bytes
+                    // Rclone VFS creates sparse files that report full size but may be partially downloaded
+                    var (isFullyCached, cachedBytes, percentage) = FileSystemUtil.GetCacheStatus(cachePath, expectedSize);
+
+                    if (isFullyCached)
+                    {
+                        return (true, $"fully cached on disk ({FormatBytes(cachedBytes)})", cachedBytes, 100);
+                    }
+                    else if (percentage > 0)
+                    {
+                        return (false, $"{percentage}% cached on disk ({FormatBytes(cachedBytes)}/{FormatBytes(expectedSize)})", cachedBytes, percentage);
+                    }
+                    else
+                    {
+                        // File exists but no actual data (0% sparse file)
+                        return (false, $"sparse file placeholder ({FormatBytes(cachedBytes)}/{FormatBytes(expectedSize)})", cachedBytes, 0);
+                    }
+                }
+            }
+
+            return null; // Not found in cache directory
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("[HealthCheck] Error checking VFS cache directory for {Instance}: {Error}",
+                instance.Name, ex.Message);
+            return null;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        int order = 0;
+        double size = bytes;
+        while (size >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            size /= 1024;
+        }
+        return $"{size:0.##} {sizes[order]}";
     }
 }

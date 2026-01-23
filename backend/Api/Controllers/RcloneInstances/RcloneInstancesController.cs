@@ -8,12 +8,11 @@ namespace NzbWebDAV.Api.Controllers.RcloneInstances;
 
 [ApiController]
 [Route("api/rclone-instances")]
-public class RcloneInstancesController(IDbContextFactory<DavDatabaseContext> dbFactory) : BaseApiController
+public class RcloneInstancesController(DavDatabaseContext db) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        await using var db = await dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var instances = await db.RcloneInstances.OrderBy(i => i.Name).ToListAsync().ConfigureAwait(false);
         return Ok(new { status = true, instances });
     }
@@ -39,7 +38,6 @@ public class RcloneInstancesController(IDbContextFactory<DavDatabaseContext> dbF
             CreatedAt = DateTimeOffset.UtcNow
         };
 
-        await using var db = await dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         db.RcloneInstances.Add(instance);
         await db.SaveChangesAsync().ConfigureAwait(false);
 
@@ -51,7 +49,6 @@ public class RcloneInstancesController(IDbContextFactory<DavDatabaseContext> dbF
     {
         var form = await Request.ReadFormAsync().ConfigureAwait(false);
 
-        await using var db = await dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var instance = await db.RcloneInstances.FindAsync(id).ConfigureAwait(false);
         if (instance == null)
             return NotFound(new { status = false, error = "Instance not found" });
@@ -75,7 +72,6 @@ public class RcloneInstancesController(IDbContextFactory<DavDatabaseContext> dbF
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        await using var db = await dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var instance = await db.RcloneInstances.FindAsync(id).ConfigureAwait(false);
         if (instance == null)
             return NotFound(new { status = false, error = "Instance not found" });
@@ -89,7 +85,6 @@ public class RcloneInstancesController(IDbContextFactory<DavDatabaseContext> dbF
     [HttpPost("{id:guid}/test")]
     public async Task<IActionResult> TestConnection(Guid id)
     {
-        await using var db = await dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var instance = await db.RcloneInstances.FindAsync(id).ConfigureAwait(false);
         if (instance == null)
             return NotFound(new { status = false, error = "Instance not found" });
@@ -126,6 +121,4 @@ public class RcloneInstancesController(IDbContextFactory<DavDatabaseContext> dbF
 
         return Ok(new { status = true, result });
     }
-
-    protected override Task<IActionResult> HandleRequest() => Task.FromResult<IActionResult>(Ok());
 }

@@ -1,5 +1,5 @@
 ﻿namespace UsenetSharp.Exceptions;
 
-public class UsenetProtocolException(string errorMessage) : Exception(errorMessage)
+public class UsenetProtocolException(string errorMessage) : UsenetException(errorMessage)
 {
 }

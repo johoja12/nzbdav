@@ -52,17 +52,10 @@ export function LeftNavigation({ version, buildDate, gitBranch, gitCommit, gitRe
                 <div className={styles["footer-item"]}>
                     changelog
                 </div>
-                {(version || gitCommit || buildDate || gitUpstream) && (
+                {(version || gitCommit) && (
                     <div className={styles["build-info"]}>
-                        {gitUpstream && <div className={styles["footer-item"]}>fork of {gitUpstream}{upstreamDate && ` (${upstreamDate})`}</div>}
-                        {originalDate && <div className={styles["footer-item"]}>original ({originalDate})</div>}
-                        {version && <div className={styles["footer-item"]}>v{version}</div>}
-                        {gitCommit && (
-                            <div className={styles["footer-item"]}>
-                                {gitRemote && gitBranch ? `${gitRemote}:${gitBranch}` : gitBranch}@{gitCommit}
-                            </div>
-                        )}
-                        {buildDate && <div className={styles["footer-item"]}>built {buildDate}</div>}
+                        {version && <span>v{version}</span>}
+                        {gitCommit && <span> ({gitBranch}@{gitCommit})</span>}
                     </div>
                 )}
                 {!isFrontendAuthDisabled && <>

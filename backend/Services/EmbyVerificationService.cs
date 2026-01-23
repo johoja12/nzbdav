@@ -228,7 +228,8 @@ public class EmbyVerificationService : IHostedService, IDisposable
     /// Check if a specific file is currently being played in an active Emby session.
     /// Uses cached session data (refreshed every 3 seconds) for fast lookups.
     /// </summary>
-    public bool IsFilePlaying(string? filePath)
+    /// <returns>True if playing, False if not playing, null if verification disabled or not configured</returns>
+    public bool? IsFilePlaying(string? filePath)
     {
         if (string.IsNullOrEmpty(filePath))
             return false;
@@ -236,8 +237,9 @@ public class EmbyVerificationService : IHostedService, IDisposable
         var config = _configManager.GetEmbyConfig();
         if (!config.VerifyPlayback || config.Servers.Count == 0)
         {
-            // If verification disabled, assume all streaming is real playback
-            return true;
+            // Verification disabled or no servers - return null to indicate "not configured"
+            // This allows the caller to fall through to other classification logic
+            return null;
         }
 
         RefreshCacheIfNeeded();

@@ -248,6 +248,62 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                             </section>
                         )}
 
+                        {/* Rclone Cache Status */}
+                        {fileDetails.cacheStatus && fileDetails.cacheStatus.length > 0 && (
+                            <section className={styles.section}>
+                                <h5>Rclone Cache Status</h5>
+                                <Table bordered size="sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Instance</th>
+                                            <th>Status</th>
+                                            <th>Cached</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {fileDetails.cacheStatus.map((cache, idx) => (
+                                            <tr key={idx}>
+                                                <td>{cache.instanceName}</td>
+                                                <td>
+                                                    {cache.isFullyCached ? (
+                                                        <Badge bg="success">
+                                                            <i className="bi bi-check-circle-fill me-1"></i>
+                                                            Fully Cached
+                                                        </Badge>
+                                                    ) : cache.cachePercentage > 0 ? (
+                                                        <Badge bg="warning" text="dark">
+                                                            <i className="bi bi-hourglass-split me-1"></i>
+                                                            {cache.cachePercentage}%
+                                                        </Badge>
+                                                    ) : (
+                                                        <Badge bg="secondary">
+                                                            {cache.status === 'not_in_cache' ? 'Not Cached' :
+                                                             cache.status === 'error' ? 'Error' :
+                                                             cache.status}
+                                                        </Badge>
+                                                    )}
+                                                </td>
+                                                <td className={styles.numberCell}>
+                                                    {cache.cachedBytes > 0 ? formatBytes(cache.cachedBytes) : '-'}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </Table>
+                                {/* Show cached path if available */}
+                                {fileDetails.cacheStatus.some(c => c.cachedPath) && (
+                                    <div className="mt-2">
+                                        {fileDetails.cacheStatus.filter(c => c.cachedPath).map((cache, idx) => (
+                                            <div key={idx} className="small text-muted">
+                                                <strong>{cache.instanceName}:</strong>{' '}
+                                                <code style={{ fontSize: '0.8em', wordBreak: 'break-all' }}>{cache.cachedPath}</code>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
                         {/* Media Analysis */}
                         <section className={styles.section}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -322,8 +378,12 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                             <tr>
                                                 <td className={styles.labelCell}>Latest Result</td>
                                                 <td className={styles.valueCell}>
-                                                    <Badge bg={fileDetails.latestHealthCheckResult.result === 0 ? "success" : "danger"}>
-                                                        {fileDetails.latestHealthCheckResult.result === 0 ? "Healthy" : "Unhealthy"}
+                                                    <Badge bg={
+                                                        fileDetails.latestHealthCheckResult.result === 0 ? "success" :
+                                                        fileDetails.latestHealthCheckResult.result === 2 ? "info" : "danger"
+                                                    }>
+                                                        {fileDetails.latestHealthCheckResult.result === 0 ? "Healthy" :
+                                                         fileDetails.latestHealthCheckResult.result === 2 ? "Skipped" : "Unhealthy"}
                                                     </Badge>
                                                 </td>
                                             </tr>
@@ -369,13 +429,12 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                             <tr>
                                                 <th>Provider</th>
                                                 <th>Success</th>
-                                                <th>Failed</th>
                                                 <th>
                                                     <OverlayTrigger
                                                         placement="top"
-                                                        overlay={<Tooltip>Timeout errors (segment fetch took too long)</Tooltip>}
+                                                        overlay={<Tooltip>Timeout and other errors (segment fetch took too long or failed)</Tooltip>}
                                                     >
-                                                        <span style={{ cursor: 'help', borderBottom: '1px dotted' }}>Timeouts</span>
+                                                        <span style={{ cursor: 'help', borderBottom: '1px dotted' }}>Errors</span>
                                                     </OverlayTrigger>
                                                 </th>
                                                 <th>
@@ -415,11 +474,6 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                                         </td>
                                                         <td className={styles.numberCell}>
                                                             <Badge bg="success">{stat.successfulSegments.toLocaleString()}</Badge>
-                                                        </td>
-                                                        <td className={styles.numberCell}>
-                                                            <Badge bg={stat.failedSegments > 0 ? "danger" : "secondary"}>
-                                                                {stat.failedSegments.toLocaleString()}
-                                                            </Badge>
                                                         </td>
                                                         <td className={styles.numberCell}>
                                                             <Badge bg={stat.timeoutErrors > 0 ? "warning" : "secondary"} text={stat.timeoutErrors > 0 ? "dark" : undefined}>

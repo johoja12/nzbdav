@@ -29,6 +29,17 @@ public class GetFileDetailsResponse
     public string? CorruptionReason { get; set; }
     public List<ProviderStatistic> ProviderStats { get; set; } = new();
     public HealthCheckInfo? LatestHealthCheckResult { get; set; }
+    public List<RcloneCacheStatus> CacheStatus { get; set; } = new();
+
+    public class RcloneCacheStatus
+    {
+        public string InstanceName { get; set; } = null!;
+        public bool IsFullyCached { get; set; }
+        public long CachedBytes { get; set; }
+        public int CachePercentage { get; set; }
+        public string Status { get; set; } = "unknown";
+        public string? CachedPath { get; set; }
+    }
 
     public class ProviderStatistic
     {

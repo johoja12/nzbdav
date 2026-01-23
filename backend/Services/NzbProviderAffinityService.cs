@@ -66,7 +66,7 @@ public class NzbProviderAffinityService
     }
 
     /// <summary>
-    /// Record a failed segment download
+    /// Record a failed segment download (generic failure)
     /// </summary>
     public void RecordFailure(string jobName, int providerIndex)
     {
@@ -81,6 +81,40 @@ public class NzbProviderAffinityService
         // Log straggler failures to help diagnose slow provider issues
         Log.Debug("[NzbProviderAffinity] RecordFailure: Job={JobName}, Provider={ProviderIndex}, TotalFailures={Failures}",
             jobName, providerIndex, providerStats.FailedSegments);
+    }
+
+    /// <summary>
+    /// Record a timeout error for a segment fetch (includes in FailedSegments)
+    /// </summary>
+    public void RecordTimeoutError(string jobName, int providerIndex)
+    {
+        if (!_configManager.IsProviderAffinityEnabled()) return;
+        if (string.IsNullOrEmpty(jobName)) return;
+
+        var jobStats = _stats.GetOrAdd(jobName, _ => new ConcurrentDictionary<int, ProviderPerformance>());
+        var providerStats = jobStats.GetOrAdd(providerIndex, _ => new ProviderPerformance());
+
+        providerStats.RecordTimeoutError();
+
+        Log.Debug("[NzbProviderAffinity] RecordTimeoutError: Job={JobName}, Provider={ProviderIndex}, TimeoutErrors={Timeouts}",
+            jobName, providerIndex, providerStats.TimeoutErrors);
+    }
+
+    /// <summary>
+    /// Record a missing article (430) error for a segment fetch (includes in FailedSegments)
+    /// </summary>
+    public void RecordMissingArticleError(string jobName, int providerIndex)
+    {
+        if (!_configManager.IsProviderAffinityEnabled()) return;
+        if (string.IsNullOrEmpty(jobName)) return;
+
+        var jobStats = _stats.GetOrAdd(jobName, _ => new ConcurrentDictionary<int, ProviderPerformance>());
+        var providerStats = jobStats.GetOrAdd(providerIndex, _ => new ProviderPerformance());
+
+        providerStats.RecordMissingArticleError();
+
+        Log.Debug("[NzbProviderAffinity] RecordMissingArticleError: Job={JobName}, Provider={ProviderIndex}, MissingErrors={Missing}",
+            jobName, providerIndex, providerStats.MissingArticleErrors);
     }
 
     /// <summary>
@@ -325,8 +359,6 @@ public class NzbProviderAffinityService
             if (performance.SuccessRate < successRateThreshold)
             {
                 result.Add(providerIndex);
-                Log.Debug("[NzbProviderAffinity] Provider {Index} marked as low success rate for job '{Job}': {Rate:F1}% ({Success}/{Total})",
-                    providerIndex, jobName, performance.SuccessRate, performance.SuccessfulSegments, totalSegments);
             }
         }
 
@@ -466,6 +498,8 @@ public class NzbProviderAffinityService
         private readonly object _lock = new();
         private int _successfulSegments;
         private int _failedSegments;
+        private int _timeoutErrors;
+        private int _missingArticleErrors;
         private long _totalBytes;
         private long _totalTimeMs;
         private long _recentAverageSpeedBps;
@@ -479,6 +513,8 @@ public class NzbProviderAffinityService
 
         public int SuccessfulSegments => _successfulSegments;
         public int FailedSegments => _failedSegments;
+        public int TimeoutErrors => _timeoutErrors;
+        public int MissingArticleErrors => _missingArticleErrors;
         public long TotalBytes => _totalBytes;
         public long TotalTimeMs => _totalTimeMs;
         public long RecentAverageSpeedBps => _recentAverageSpeedBps;
@@ -544,12 +580,34 @@ public class NzbProviderAffinityService
             }
         }
 
+        public void RecordTimeoutError()
+        {
+            lock (_lock)
+            {
+                _failedSegments++;
+                _timeoutErrors++;
+                _isDirty = true;
+            }
+        }
+
+        public void RecordMissingArticleError()
+        {
+            lock (_lock)
+            {
+                _failedSegments++;
+                _missingArticleErrors++;
+                _isDirty = true;
+            }
+        }
+
         public void LoadFromDb(NzbProviderStats dbStats)
         {
             lock (_lock)
             {
                 _successfulSegments = dbStats.SuccessfulSegments;
                 _failedSegments = dbStats.FailedSegments;
+                _timeoutErrors = dbStats.TimeoutErrors;
+                _missingArticleErrors = dbStats.MissingArticleErrors;
                 _totalBytes = dbStats.TotalBytes;
                 _totalTimeMs = dbStats.TotalTimeMs;
                 _recentAverageSpeedBps = dbStats.RecentAverageSpeedBps;
@@ -563,6 +621,8 @@ public class NzbProviderAffinityService
             {
                 dbStats.SuccessfulSegments = _successfulSegments;
                 dbStats.FailedSegments = _failedSegments;
+                dbStats.TimeoutErrors = _timeoutErrors;
+                dbStats.MissingArticleErrors = _missingArticleErrors;
                 dbStats.TotalBytes = _totalBytes;
                 dbStats.TotalTimeMs = _totalTimeMs;
                 dbStats.RecentAverageSpeedBps = _recentAverageSpeedBps;
@@ -576,6 +636,8 @@ public class NzbProviderAffinityService
             {
                 dbStats.SuccessfulSegments = _successfulSegments;
                 dbStats.FailedSegments = _failedSegments;
+                dbStats.TimeoutErrors = _timeoutErrors;
+                dbStats.MissingArticleErrors = _missingArticleErrors;
                 dbStats.TotalBytes = _totalBytes;
                 dbStats.TotalTimeMs = _totalTimeMs;
                 dbStats.RecentAverageSpeedBps = _recentAverageSpeedBps;

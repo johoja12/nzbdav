@@ -143,6 +143,19 @@ public class StreamingMonitorService : IHostedService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Check if there are any active EmbyStrmPlayback connections.
+    /// STRM playback is always considered real playback.
+    /// </summary>
+    private bool HasActiveStrmPlayback()
+    {
+        var connectionPoolStats = _usenetClient.ConnectionPoolStats;
+        if (connectionPoolStats == null) return false;
+
+        var activeConnections = connectionPoolStats.GetActiveConnections();
+        return activeConnections.Any(c => c.UsageType == ConnectionUsageType.EmbyStrmPlayback);
+    }
+
     private async Task OnStreamingStartedDebounced()
     {
         try
@@ -160,7 +173,14 @@ public class StreamingMonitorService : IHostedService, IDisposable
 
             bool isRealPlayback = false;
 
-            if (plexConfig.VerifyPlayback)
+            // Check for STRM playback first - always considered real playback
+            if (HasActiveStrmPlayback())
+            {
+                isRealPlayback = true;
+                Log.Debug("STRM playback detected - treating as real playback");
+            }
+
+            if (!isRealPlayback && plexConfig.VerifyPlayback)
             {
                 isRealPlayback = await _plexVerificationService.IsAnyServerPlaying().ConfigureAwait(false);
             }

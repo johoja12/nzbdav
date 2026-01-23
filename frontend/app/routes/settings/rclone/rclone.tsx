@@ -1,14 +1,17 @@
-import { useEffect, useState, useCallback } from "react";
-import { Button, Form, Spinner, Badge } from "react-bootstrap";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Button, Form, Spinner, Badge, Alert } from "react-bootstrap";
 import type { RcloneInstance, RcloneTestResult } from "~/types/rclone";
 import styles from "./rclone.module.css";
 
 type ConnectionState = 'idle' | 'testing' | 'success' | 'error';
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 export function RcloneSettings() {
     const [instances, setInstances] = useState<RcloneInstance[]>([]);
     const [loading, setLoading] = useState(true);
     const [testStates, setTestStates] = useState<Record<string, ConnectionState>>({});
+    const [saveState, setSaveState] = useState<SaveState>('idle');
+    const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const fetchInstances = useCallback(async () => {
         try {
@@ -64,6 +67,12 @@ export function RcloneSettings() {
             i.id === id ? { ...i, [field]: value } : i
         ));
 
+        // Show saving indicator
+        setSaveState('saving');
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+        }
+
         // Then sync to server
         const instance = instances.find(i => i.id === id);
         if (!instance) return;
@@ -75,10 +84,23 @@ export function RcloneSettings() {
             }
         });
 
-        await fetch(`/api/rclone-instances/${id}`, {
-            method: "PUT",
-            body: formData
-        });
+        try {
+            const response = await fetch(`/api/rclone-instances/${id}`, {
+                method: "PUT",
+                body: formData
+            });
+
+            if (response.ok) {
+                setSaveState('saved');
+                saveTimeoutRef.current = setTimeout(() => setSaveState('idle'), 2000);
+            } else {
+                setSaveState('error');
+                saveTimeoutRef.current = setTimeout(() => setSaveState('idle'), 3000);
+            }
+        } catch {
+            setSaveState('error');
+            saveTimeoutRef.current = setTimeout(() => setSaveState('idle'), 3000);
+        }
     }, [instances]);
 
     const testConnection = useCallback(async (id: string) => {
@@ -113,10 +135,26 @@ export function RcloneSettings() {
         <div className={styles.container}>
             <div className={styles.header}>
                 <h5>Rclone Instances</h5>
-                <Button variant="outline-secondary" size="sm" onClick={addInstance}>
-                    + Add Instance
-                </Button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {saveState === 'saving' && (
+                        <Badge bg="secondary"><Spinner animation="border" size="sm" /> Saving...</Badge>
+                    )}
+                    {saveState === 'saved' && (
+                        <Badge bg="success">Saved ✓</Badge>
+                    )}
+                    {saveState === 'error' && (
+                        <Badge bg="danger">Save failed</Badge>
+                    )}
+                    <Button variant="outline-secondary" size="sm" onClick={addInstance}>
+                        + Add Instance
+                    </Button>
+                </div>
             </div>
+
+            <Alert variant="info" className="py-2 px-3" style={{ fontSize: '0.85em' }}>
+                <i className="bi bi-info-circle me-2"></i>
+                Changes to Rclone instances are saved automatically. The main "Save" button below applies to other settings tabs.
+            </Alert>
 
             <p className={styles.description}>
                 Configure rclone instances for VFS cache monitoring and directory refresh operations.
@@ -229,6 +267,22 @@ export function RcloneSettings() {
                             checked={instance.enablePrefetch}
                             onChange={e => updateInstance(instance.id, 'enablePrefetch', e.target.checked)}
                         />
+                    </div>
+
+                    <div className={styles.formRow}>
+                        <Form.Group className={styles.formGroup}>
+                            <Form.Label>VFS Cache Path (optional)</Form.Label>
+                            <Form.Control
+                                type="text"
+                                value={instance.vfsCachePath || ''}
+                                onChange={e => updateInstance(instance.id, 'vfsCachePath', e.target.value)}
+                                placeholder="/mnt/nzbdav-cache"
+                            />
+                            <Form.Text muted>
+                                Path to rclone VFS cache directory. Used for cache status detection and cache deletion.
+                                Structure: <code>{"{path}"}/vfs/{"{remote}"}/.ids/...</code>
+                            </Form.Text>
+                        </Form.Group>
                     </div>
 
                     <div className={styles.testRow}>

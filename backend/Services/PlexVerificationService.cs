@@ -238,8 +238,8 @@ public class PlexVerificationService : IHostedService, IDisposable
     /// Uses cached session data (refreshed every 3 seconds) for fast lookups.
     /// </summary>
     /// <param name="filePath">Full path or filename to check</param>
-    /// <returns>True if file is in an active Plex playback session</returns>
-    public bool IsFilePlaying(string? filePath)
+    /// <returns>True if playing, False if not playing, null if verification disabled or not configured</returns>
+    public bool? IsFilePlaying(string? filePath)
     {
         if (string.IsNullOrEmpty(filePath))
             return false;
@@ -247,8 +247,9 @@ public class PlexVerificationService : IHostedService, IDisposable
         var config = _configManager.GetPlexConfig();
         if (!config.VerifyPlayback || config.Servers.Count == 0)
         {
-            // If verification disabled, assume all streaming is real playback
-            return true;
+            // Verification disabled or no servers - return null to indicate "not configured"
+            // This allows the caller to fall through to other classification logic
+            return null;
         }
 
         // Refresh cache if stale

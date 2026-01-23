@@ -272,13 +272,13 @@ public class MultiProviderNntpClient : INntpClient
                 // Explicitly caught to record it
                 RecordMissingArticle(provider.ProviderIndex, e.SegmentId, cancellationToken, operationName);
 
-                // Record failure for provider affinity
+                // Record missing article error for provider affinity (430 - article not found)
                 if (_affinityService != null)
                 {
                     var affinityKey = ctx.AffinityKey;
                     if (!string.IsNullOrEmpty(affinityKey))
                     {
-                        _affinityService.RecordFailure(affinityKey, provider.ProviderIndex);
+                        _affinityService.RecordMissingArticleError(affinityKey, provider.ProviderIndex);
                     }
                 }
 
@@ -294,7 +294,16 @@ public class MultiProviderNntpClient : INntpClient
                     var affinityKey = ctx.AffinityKey;
                     if (!string.IsNullOrEmpty(affinityKey))
                     {
-                        _affinityService.RecordFailure(affinityKey, provider.ProviderIndex);
+                        // Categorize the failure type for better diagnostics
+                        // TimeoutException (explicit) and related network timeouts should be counted as timeout errors
+                        if (e is TimeoutException || e.Message.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _affinityService.RecordTimeoutError(affinityKey, provider.ProviderIndex);
+                        }
+                        else
+                        {
+                            _affinityService.RecordFailure(affinityKey, provider.ProviderIndex);
+                        }
                     }
                 }
 
@@ -306,13 +315,13 @@ public class MultiProviderNntpClient : INntpClient
             {
                 stopwatch.Stop();
 
-                // Record timeout/cancellation as failure for provider affinity (only if it's a real timeout, not parent cancellation)
+                // Record timeout as specific error type for provider affinity (only if it's a real timeout, not parent cancellation)
                 if (_affinityService != null && !cancellationToken.IsCancellationRequested)
                 {
                     var affinityKey = ctx.AffinityKey;
                     if (!string.IsNullOrEmpty(affinityKey))
                     {
-                        _affinityService.RecordFailure(affinityKey, provider.ProviderIndex);
+                        _affinityService.RecordTimeoutError(affinityKey, provider.ProviderIndex);
                     }
                 }
 

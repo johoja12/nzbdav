@@ -121,6 +121,16 @@ export type FileDetails = {
     mediaInfo: string | null;
     providerStats: ProviderStatistic[];
     latestHealthCheckResult: HealthCheckInfoType | null;
+    cacheStatus: RcloneCacheStatus[];
+}
+
+export type RcloneCacheStatus = {
+    instanceName: string;
+    isFullyCached: boolean;
+    cachedBytes: number;
+    cachePercentage: number;
+    status: string;
+    cachedPath?: string | null;
 }
 
 export type ProviderStatistic = {

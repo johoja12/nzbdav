@@ -22,6 +22,13 @@ public class DavItem
     public bool IsCorrupted { get; set; }
     public string? CorruptionReason { get; set; }
 
+    // Cache state tracking
+    public DateTimeOffset? LastCacheCheck { get; set; }
+    public bool? IsCached { get; set; }
+    public long? CachedBytes { get; set; }
+    public int? CachePercentage { get; set; }
+    public string? CachedInInstance { get; set; }
+
     public static DavItem New
     (
         Guid id,
