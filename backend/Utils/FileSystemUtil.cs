@@ -42,16 +42,19 @@ public static class FileSystemUtil
 
     /// <summary>
     /// Gets actual disk usage on Linux using stat command.
-    /// stat --format=%b returns number of 512-byte blocks allocated.
+    /// stat -c %b returns number of 512-byte blocks allocated.
+    /// Note: Uses -c for BusyBox/Alpine compatibility (not --format which is GNU-only)
     /// </summary>
     private static long? GetActualDiskUsageLinux(string filePath)
     {
         try
         {
+            // Use -c for BusyBox/Alpine compatibility (Alpine uses BusyBox stat)
+            // GNU stat uses --format, but -c works on both
             var psi = new ProcessStartInfo
             {
                 FileName = "stat",
-                Arguments = $"--format=%b \"{filePath}\"",
+                Arguments = $"-c %b \"{filePath}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
