@@ -37,6 +37,16 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Try to connect to backend - redirect to startup page if unavailable
   try {
+    // Quick health check with short timeout to detect if backend is available
+    // This must happen BEFORE auth check to redirect to startup page properly
+    const healthCheck = await fetch(process.env.BACKEND_URL + "/api/health", {
+      method: "GET",
+      signal: AbortSignal.timeout(3000) // 3 second timeout for quick detection
+    });
+    if (!healthCheck.ok) {
+      throw new Error(`Backend health check returned ${healthCheck.status}`);
+    }
+
     // ensure all other routes are authenticated
     if (!await isAuthenticated(request)) return redirect("/login");
 

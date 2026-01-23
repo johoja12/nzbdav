@@ -309,6 +309,10 @@ public class NzbFileStream : Stream
             var plexPlaying = PlexVerificationService.Instance?.IsFilePlaying(fileName);
             var embyPlaying = EmbyVerificationService.Instance?.IsFilePlaying(fileName);
 
+            // Check for Plex background activity (intro detection, thumbnails, etc.)
+            // This requires the file to actually be in Plex's /activities endpoint
+            var plexBackground = PlexVerificationService.Instance?.IsFileInBackgroundActivity(fileName) ?? false;
+
             // Classify connection usage type
             ConnectionUsageType usageType;
             if (plexPlaying == true)
@@ -321,25 +325,15 @@ public class NzbFileStream : Stream
                 // Verified Emby playback - same priority as PlexPlayback, never defers
                 usageType = ConnectionUsageType.EmbyPlayback;
             }
-            else if (plexPlaying == false && embyPlaying == null)
+            else if (plexBackground)
             {
-                // Only Plex configured and says no playback = Plex background activity
+                // File is actually in Plex's background activities (intro detection, thumbnails, etc.)
                 usageType = ConnectionUsageType.PlexBackground;
-            }
-            else if (embyPlaying == false && plexPlaying == null)
-            {
-                // Only Emby configured and says no playback = Emby background activity
-                usageType = ConnectionUsageType.EmbyBackground;
-            }
-            else if (plexPlaying == false || embyPlaying == false)
-            {
-                // Both services configured but neither detected playback
-                // Could be race condition at stream start - use neutral streaming
-                usageType = ConnectionUsageType.BufferedStreaming;
             }
             else
             {
-                // Neither media server configured = standard buffered streaming
+                // No verified media server activity - use standard buffered streaming
+                // This includes: direct WebDAV access, Rclone mounts, unknown sources
                 usageType = ConnectionUsageType.BufferedStreaming;
             }
 

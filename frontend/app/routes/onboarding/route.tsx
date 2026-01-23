@@ -21,12 +21,18 @@ export async function loader({ request }: Route.LoaderArgs) {
     // if already logged in, redirect to landing page
     if (await isAuthenticated(request)) return redirect("/")
 
-    // if we don't need to go through onboarding, redirect to login page
-    const isOnboarding = await backendClient.isOnboarding();
-    if (!isOnboarding) return redirect("/login");
+    try {
+        // if we don't need to go through onboarding, redirect to login page
+        const isOnboarding = await backendClient.isOnboarding();
+        if (!isOnboarding) return redirect("/login");
 
-    // otherwise, proceed to onboarding page!
-    return { error: null };
+        // otherwise, proceed to onboarding page!
+        return { error: null };
+    } catch (error) {
+        // Backend is not available - redirect to startup page
+        console.error("Backend unavailable during onboarding, redirecting to startup page:", error);
+        return redirect("/startup");
+    }
 }
 
 export default function Index({ loaderData, actionData }: Route.ComponentProps) {

@@ -239,9 +239,13 @@ public class StatsController(
     {
         return ExecuteSafely(async () =>
         {
+            // Include both Deleted and Repaired statuses:
+            // - Deleted: file removed, no replacement search triggered
+            // - Repaired: file removed AND Arr notified to search for replacement
             var query = dbContext.HealthCheckResults
                 .AsNoTracking()
-                .Where(x => x.RepairStatus == HealthCheckResult.RepairAction.Deleted);
+                .Where(x => x.RepairStatus == HealthCheckResult.RepairAction.Deleted
+                         || x.RepairStatus == HealthCheckResult.RepairAction.Repaired);
 
             if (!string.IsNullOrWhiteSpace(search))
             {
@@ -314,8 +318,10 @@ public class StatsController(
     {
         return ExecuteSafely(async () =>
         {
+            // Clear both Deleted and Repaired entries (both involve file removal)
             await dbContext.HealthCheckResults
-                .Where(x => x.RepairStatus == HealthCheckResult.RepairAction.Deleted)
+                .Where(x => x.RepairStatus == HealthCheckResult.RepairAction.Deleted
+                         || x.RepairStatus == HealthCheckResult.RepairAction.Repaired)
                 .ExecuteDeleteAsync();
 
             return Ok(new { message = "Deleted files log cleared successfully" });
