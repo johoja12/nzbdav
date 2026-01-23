@@ -1,6 +1,6 @@
 # Analyze Upstream Commits
 
-Analyze commits from the upstream repository and create a merge plan.
+Analyze commits from the upstream repository and create a merge plan, tracking which patches have already been implemented.
 
 ## Instructions
 
@@ -14,21 +14,33 @@ git fetch upstream
 git log upstream/main --oneline --since="$ARGUMENTS days ago"
 ```
 
-3. For each commit, analyze:
+3. **Check which patches are already implemented in our fork:**
+```bash
+# Get our fork's commits not in upstream
+git log upstream/main..main --oneline
+
+# For each upstream commit, check if the same change exists in our fork by:
+# - Comparing commit messages (may have same message if cherry-picked)
+# - Comparing file changes for similar functionality
+# - Looking for "Cherry-pick" or upstream commit hash references in our commits
+```
+
+4. For each commit, analyze:
    - **Description**: What does this commit do?
+   - **Status**: ✅ Implemented, ⏳ Pending, ⚠️ Partial, or ❌ Skipped
    - **Usefulness**: Is it useful to integrate? Consider our custom features (Plex integration, SABnzbd auto-pause, shard routing, rclone multi-instance, streaming priority)
    - **Priority**: P1 (Critical bug fix), P2 (Important), P3 (Nice-to-have), P4 (Low), P5 (Skip)
    - **Approach**: Cherry-pick (clean), Manual (conflicts expected), Skip, or Review
    - **Conflicts**: Which of our custom files might conflict?
 
-4. Categorize commits into:
+5. Categorize commits into:
    - Bug Fixes (highest priority)
    - New Features
    - UI Improvements
    - Infrastructure/Refactoring
    - Skip (not needed or conflicts with our implementation)
 
-5. Check for file conflicts between our changes and upstream:
+6. Check for file conflicts between our changes and upstream:
 ```bash
 # Files we've changed
 git diff upstream/main..main --name-only
@@ -37,11 +49,23 @@ git diff upstream/main..main --name-only
 git diff main..upstream/main --name-only
 ```
 
-6. Document the analysis in `docs/UPSTREAM_MERGE_PLAN.md` with:
+7. Document the analysis in `docs/UPSTREAM_MERGE_PLAN.md` with:
    - Summary of commit count and analysis period
-   - Tables for each category with commit hash, description, priority, approach, and conflicts
+   - **Implementation Status Summary** (counts: implemented, pending, partial, skipped)
+   - Tables for each category with:
+     - Commit hash
+     - Description
+     - **Status** (✅/⏳/⚠️/❌)
+     - Priority
+     - Approach
+     - Conflicts
+     - **Fork commit hash** (if implemented)
    - Recommended integration order (phases)
    - List of high-conflict areas to preserve our custom code
+
+8. **Identify patches we've implemented but upstream hasn't:**
+   - Our custom features that solve problems upstream hasn't addressed
+   - Potential contributions back to upstream
 
 ## Our Custom Features to Preserve
 
