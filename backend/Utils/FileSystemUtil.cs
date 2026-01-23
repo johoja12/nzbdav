@@ -60,28 +60,37 @@ public static class FileSystemUtil
 
             using var process = Process.Start(psi);
             if (process == null)
+            {
+                Log.Debug("[CacheCheck] stat: Failed to start process for {Path}", filePath);
                 return null;
+            }
 
             var output = process.StandardOutput.ReadToEnd().Trim();
+            var stderr = process.StandardError.ReadToEnd().Trim();
             process.WaitForExit(5000); // 5 second timeout
 
             if (process.ExitCode != 0)
             {
-                Log.Debug("[FileSystemUtil] stat command failed for {Path}", filePath);
+                Log.Debug("[CacheCheck] stat: Command failed for {Path}, exit={Exit}, stderr={Stderr}",
+                    filePath, process.ExitCode, stderr);
                 return null;
             }
 
             // stat returns number of 512-byte blocks
             if (long.TryParse(output, out var blocks))
             {
-                return blocks * 512;
+                var bytes = blocks * 512;
+                Log.Debug("[CacheCheck] stat: {File} blocks={Blocks}, bytes={BytesMB:F1}MB",
+                    Path.GetFileName(filePath), blocks, bytes / 1024.0 / 1024.0);
+                return bytes;
             }
 
+            Log.Debug("[CacheCheck] stat: Failed to parse output '{Output}' for {Path}", output, filePath);
             return null;
         }
         catch (Exception ex)
         {
-            Log.Debug("[FileSystemUtil] Error running stat for {Path}: {Error}", filePath, ex.Message);
+            Log.Debug("[CacheCheck] stat: Error running for {Path}: {Error}", filePath, ex.Message);
             return null;
         }
     }
@@ -133,7 +142,10 @@ public static class FileSystemUtil
     public static (bool isFullyCached, long cachedBytes, int percentage) GetCacheStatus(string filePath, long expectedSize)
     {
         if (!File.Exists(filePath))
+        {
+            Log.Debug("[CacheCheck] File does not exist: {Path}", filePath);
             return (false, 0, 0);
+        }
 
         try
         {
@@ -141,24 +153,42 @@ public static class FileSystemUtil
             var apparentSize = fileInfo.Length;
 
             // Get actual disk usage (handles sparse files)
-            var actualBytes = GetActualDiskUsage(filePath) ?? apparentSize;
+            var actualBytesRaw = GetActualDiskUsage(filePath);
+            var actualBytes = actualBytesRaw ?? apparentSize;
+            var usedStatCommand = actualBytesRaw.HasValue;
 
             // Use expected size for percentage calculation if available
             var referenceSize = expectedSize > 0 ? expectedSize : apparentSize;
 
             if (referenceSize <= 0)
+            {
+                Log.Debug("[CacheCheck] {File}: referenceSize=0, assuming fully cached",
+                    Path.GetFileName(filePath));
                 return (true, actualBytes, 100);
+            }
 
             var percentage = (int)Math.Min(100, (actualBytes * 100) / referenceSize);
 
             // Consider fully cached if actual bytes >= 99% of expected
             var isFullyCached = actualBytes >= (referenceSize * 0.99);
 
+            // Always log cache check results for debugging
+            Log.Information("[CacheCheck] {File}: apparent={ApparentMB:F1}MB, actual={ActualMB:F1}MB, expected={ExpectedMB:F1}MB, " +
+                           "percentage={Pct}%, fullyCached={Cached}, usedStat={UsedStat}, path={Path}",
+                Path.GetFileName(filePath),
+                apparentSize / 1024.0 / 1024.0,
+                actualBytes / 1024.0 / 1024.0,
+                referenceSize / 1024.0 / 1024.0,
+                percentage,
+                isFullyCached,
+                usedStatCommand,
+                filePath);
+
             return (isFullyCached, actualBytes, percentage);
         }
         catch (Exception ex)
         {
-            Log.Debug("[FileSystemUtil] Error getting cache status for {Path}: {Error}", filePath, ex.Message);
+            Log.Warning("[CacheCheck] Error getting cache status for {Path}: {Error}", filePath, ex.Message);
             return (false, 0, 0);
         }
     }
