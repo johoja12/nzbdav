@@ -29,6 +29,8 @@ nuget
 !CLAUDE.md
 !docs/
 !docs/*.md
+!.claude/commands/
+!.claude/commands/*.md
 
 #################
 # Project Files #
