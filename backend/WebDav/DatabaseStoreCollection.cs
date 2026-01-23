@@ -34,6 +34,13 @@ public class DatabaseStoreCollection(
         if (configManager.HideSamples() && request.Name.Contains(".sample.", StringComparison.OrdinalIgnoreCase))
             return null;
 
+        // Handle virtual "instances" folder at root level for shard routing
+        if (davDirectory.Id == DavItem.Root.Id && request.Name.Equals("instances", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DatabaseStoreInstancesCollection(
+                httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager, nzbAnalysisService);
+        }
+
         var child = await dbClient.GetDirectoryChildAsync(davDirectory.Id, request.Name, request.CancellationToken).ConfigureAwait(false);
         if (child is null) return null;
         return GetItem(child);
@@ -50,9 +57,18 @@ public class DatabaseStoreCollection(
                 .ToList();
         }
 
-        return items
+        var result = items
             .Select(GetItem)
-            .ToArray();
+            .ToList();
+
+        // Add virtual "instances" folder at root level for shard routing
+        if (davDirectory.Id == DavItem.Root.Id)
+        {
+            result.Add(new DatabaseStoreInstancesCollection(
+                httpContext, dbClient, configManager, usenetClient, queueManager, websocketManager, nzbAnalysisService));
+        }
+
+        return result.ToArray();
     }
 
     protected override bool SupportsFastMove(SupportsFastMoveRequest request)

@@ -92,8 +92,48 @@ public class RcloneInstance
     [MaxLength(500)]
     public string? LastTestError { get; set; }
 
+    // ===== Shard Routing Configuration =====
+
+    /// <summary>
+    /// Whether shard routing is enabled for this instance.
+    /// When enabled, this instance only handles files whose ID starts with prefixes in ShardPrefixes.
+    /// </summary>
+    public bool IsShardEnabled { get; set; }
+
+    /// <summary>
+    /// The hex prefixes this shard handles (e.g., "0-3" or "0,1,2,3" for first 4 hex chars).
+    /// Files with IDs starting with these characters will be routed to this instance.
+    /// Format: comma-separated values or ranges like "0-3,a-f"
+    /// </summary>
+    [MaxLength(100)]
+    public string? ShardPrefixes { get; set; }
+
+    /// <summary>
+    /// Optional shard index for display purposes (0, 1, 2, 3...).
+    /// Used to generate default prefixes and for UI organization.
+    /// </summary>
+    public int? ShardIndex { get; set; }
+
     /// <summary>
     /// Get the base URL for RC API calls
     /// </summary>
     public string GetBaseUrl() => $"http://{Host}:{Port}";
+
+    /// <summary>
+    /// Get the instance-specific WebDAV mount path.
+    /// When shard routing is enabled, rclone should mount this path to only see its shard's files.
+    /// </summary>
+    public string GetWebDavInstancePath() => $"/instances/{Id}";
+
+    /// <summary>
+    /// Check if this instance handles a given file ID based on shard configuration.
+    /// Returns true if sharding is disabled or if the ID matches this shard's prefixes.
+    /// </summary>
+    public bool HandlesFileId(Guid fileId)
+    {
+        if (!IsShardEnabled || string.IsNullOrEmpty(ShardPrefixes))
+            return true; // Not sharded, handles all files
+
+        return Utils.ShardRoutingUtil.ShardHandlesId(ShardPrefixes, fileId);
+    }
 }

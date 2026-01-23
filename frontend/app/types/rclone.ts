@@ -14,6 +14,10 @@ export interface RcloneInstance {
     lastTestedAt?: string;
     lastTestSuccess?: boolean;
     lastTestError?: string;
+    // Shard routing configuration
+    isShardEnabled: boolean;
+    shardPrefixes?: string;
+    shardIndex?: number;
 }
 
 export interface RcloneTestResult {

@@ -208,12 +208,25 @@ public class MultiConnectionNntpClient : INntpClient
     )
     {
         // Acquire global operation permit first (if global limiter is configured)
+        // EXCEPTION: Queue, HealthCheck, Analysis, and Repair operations have their own
+        // concurrency control at a higher level, so acquiring per-operation permits causes
+        // starvation. These operations control concurrency via config settings directly.
         GlobalOperationLimiter.OperationPermit? globalPermit = null;
         if (_globalLimiter != null)
         {
             var usageContext = cancellationToken.GetContext<ConnectionUsageContext>();
             var usageType = usageContext.UsageType;
-            globalPermit = await _globalLimiter.AcquirePermitAsync(usageType, cancellationToken).ConfigureAwait(false);
+
+            // Skip global permit for batch operations that have their own concurrency control
+            var skipGlobalPermit = usageType == ConnectionUsageType.Queue
+                                || usageType == ConnectionUsageType.Analysis
+                                || usageType == ConnectionUsageType.HealthCheck
+                                || usageType == ConnectionUsageType.Repair;
+
+            if (!skipGlobalPermit)
+            {
+                globalPermit = await _globalLimiter.AcquirePermitAsync(usageType, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         // Propagate the connection usage context
@@ -399,12 +412,25 @@ public class MultiConnectionNntpClient : INntpClient
     )
     {
         // Acquire global operation permit first (if global limiter is configured)
+        // EXCEPTION: Queue, HealthCheck, Analysis, and Repair operations have their own
+        // concurrency control at a higher level, so acquiring per-operation permits causes
+        // starvation. These operations control concurrency via config settings directly.
         GlobalOperationLimiter.OperationPermit? globalPermit = null;
         if (_globalLimiter != null)
         {
             var usageContext = cancellationToken.GetContext<ConnectionUsageContext>();
             var usageType = usageContext.UsageType;
-            globalPermit = await _globalLimiter.AcquirePermitAsync(usageType, cancellationToken).ConfigureAwait(false);
+
+            // Skip global permit for batch operations that have their own concurrency control
+            var skipGlobalPermit = usageType == ConnectionUsageType.Queue
+                                || usageType == ConnectionUsageType.Analysis
+                                || usageType == ConnectionUsageType.HealthCheck
+                                || usageType == ConnectionUsageType.Repair;
+
+            if (!skipGlobalPermit)
+            {
+                globalPermit = await _globalLimiter.AcquirePermitAsync(usageType, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         // Propagate the connection usage context

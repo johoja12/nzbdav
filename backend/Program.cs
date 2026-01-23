@@ -57,12 +57,12 @@ class Program
 
         // Log build version to verify correct build is running
         Log.Warning("═══════════════════════════════════════════════════════════════");
-        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-21-STICKY-COOLDOWN");
-        Log.Warning("  FEATURE: Sticky failure weight cooldown (v3)");
-        Log.Warning("  - Rolling window (last 30 ops) for success rate");
-        Log.Warning("  - Failure weight: +2 per fail, -1 per success (sticky!)");
-        Log.Warning("  - Cooldown: 15s base + weight*3s + rate*20s (max 60s)");
-        Log.Warning("  - Cooldown = soft deprioritization, not hard exclusion");
+        Log.Warning("  NzbDav Backend Starting - BUILD v2026-01-23-SHARD-ROUTING");
+        Log.Warning("  FEATURE: Rclone instance shard routing");
+        Log.Warning("  - Each rclone instance can be assigned specific ID prefixes");
+        Log.Warning("  - /instances/{id}/ paths provide filtered .ids views");
+        Log.Warning("  - Eliminates duplicate caching across rclone instances");
+        Log.Warning("  - Full content/completed/nzb folders visible to all instances");
         Log.Warning("═══════════════════════════════════════════════════════════════");
 
         // Run Arr History Tester if requested

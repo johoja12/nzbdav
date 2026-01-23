@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Utils;
 using Serilog;
 
 namespace NzbWebDAV.Clients;
@@ -37,6 +38,36 @@ public class RcloneClient : IDisposable
                 new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
         }
     }
+
+    /// <summary>
+    /// Check if this rclone instance handles a specific file ID based on shard configuration.
+    /// Returns true if sharding is disabled or if the file's ID matches this instance's shard.
+    /// </summary>
+    public bool HandlesFileId(Guid fileId)
+    {
+        return _instance.HandlesFileId(fileId);
+    }
+
+    /// <summary>
+    /// Whether shard routing is enabled for this instance.
+    /// </summary>
+    public bool IsShardEnabled => _instance.IsShardEnabled;
+
+    /// <summary>
+    /// Get the .ids path for a file within this instance's mount.
+    /// When sharding is enabled, returns the path relative to the instance root.
+    /// </summary>
+    public string GetIdsPathForFile(Guid fileId)
+    {
+        var idsPath = ShardRoutingUtil.GetIdsPathForId(fileId);
+        return $".ids/{idsPath}";
+    }
+
+    /// <summary>
+    /// Get the instance's shard prefixes (e.g., "0-3" or "0,1,2,3").
+    /// Returns null if sharding is not enabled.
+    /// </summary>
+    public string? ShardPrefixes => _instance.IsShardEnabled ? _instance.ShardPrefixes : null;
 
     public async Task<RcloneTestResult> TestConnectionAsync(CancellationToken ct = default)
     {
