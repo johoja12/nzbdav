@@ -27,6 +27,8 @@ nuget
 !OPTIMIZATIONS.md
 !DATABASE_OPTIMIZATION.md
 !CLAUDE.md
+!docs/
+!docs/*.md
 
 #################
 # Project Files #
