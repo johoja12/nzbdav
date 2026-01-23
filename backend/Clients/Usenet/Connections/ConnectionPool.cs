@@ -198,9 +198,15 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
                 }
                 break;
             }
+            catch (OperationCanceledException)
+            {
+                // Cancellations are NOT connection failures - don't trigger circuit breaker
+                _gate.Release();
+                throw;
+            }
             catch (Exception ex)
             {
-                // Update circuit breaker stats
+                // Update circuit breaker stats (only for real connection failures)
                 var currentFailures = Interlocked.Increment(ref _consecutiveConnectionFailures);
                 _lastConnectionFailure = DateTimeOffset.UtcNow;
                 // Check for socket exhaustion errors (AddressInUse, TryAgain/EAGAIN)

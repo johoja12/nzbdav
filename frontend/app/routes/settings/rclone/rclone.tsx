@@ -111,6 +111,18 @@ export function RcloneSettings() {
         fetchInstances();
     }, [fetchInstances]);
 
+    // Check for ongoing migration on page load
+    useEffect(() => {
+        const checkOngoingMigration = async () => {
+            const isRunning = await fetchMigrationStatus();
+            if (isRunning) {
+                setGlobalMigrating(true);
+                startStatusPolling();
+            }
+        };
+        checkOngoingMigration();
+    }, [fetchMigrationStatus, startStatusPolling]);
+
     // Fetch recommendations when instances change
     useEffect(() => {
         if (instances.length > 0) {
