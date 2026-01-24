@@ -586,3 +586,8 @@ function isValidQueueConnections(maxQueueConnections: string): boolean {
 function isValidHistoryRetention(historyRetentionHours: string): boolean {
     return historyRetentionHours === "" || isPositiveInteger(historyRetentionHours);
 }
+
+function isPositiveInteger(value: string): boolean {
+    const num = parseInt(value, 10);
+    return !isNaN(num) && num > 0 && num.toString() === value;
+}
