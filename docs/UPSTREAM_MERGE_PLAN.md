@@ -13,10 +13,31 @@ The upstream repository has 52 new commits in the last week. This document analy
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| ✅ Implemented | 5 | Patches integrated into our fork |
-| ⏳ Pending | 35 | Queued for integration |
+| ✅ Implemented | 19 | Patches integrated into our fork |
+| ⏳ Pending | 21 | Queued for integration |
 | ⚠️ Partial | 2 | Different approach or partial implementation |
 | ❌ Skipped | 10 | Will not integrate (conflicts/not needed) |
+
+### Recent Integration (2026-01-24)
+
+Integrated 14 additional upstream commits via `upstream-merge` branch:
+
+| Upstream | Fork | Description |
+|----------|------|-------------|
+| `7953211` | `c544419` | RAR volume validation |
+| `edf14e6` | `333150b` | Allow saving disabled provider without testing |
+| `9a66a24` | `16239ad` | Backend proxy connection cleanup |
+| `3ba1518` | `4102979` | User-agent update |
+| `b13f20b` | `aa4da91` | AddUrl API fallback |
+| `dcf111b` | `902d369` | TagInput component |
+| `b179693` | `da07733` | File filtering wildcards |
+| `3c0c6cc` | `da5fc52` | Migrate blocklist format |
+| `dab4f2f` | `36896fd` | Ignored Files UI |
+| `392aadc` | `33ef4e4` | SABnzbd get_cats API |
+| `799c5af` | `6df6f05` | MultiCheckboxInput component |
+| `61eaf60` | `020949d` | Health-check categories UI |
+| `35139db` | `4b00fee` | Per-category health checks backend |
+| `42fe84b` | `599cfb3` | Migrate health-check setting |
 
 ## Priority Legend
 
@@ -44,7 +65,7 @@ The upstream repository has 52 new commits in the last week. This document analy
 | `23d8541` | Fixed `Cannot find byte position` bug | ✅ | `1417a77` | P1 | Cherry-pick | None |
 | `7966414` | Fixed bug determining rar part numbers | ✅ | `e52fc7b` | P1 | Cherry-pick | None |
 | `686878b` | Added support for par2 filenames containing relative paths | ✅ | `ffd36b7` | P1 | Cherry-pick | None |
-| `7953211` | Added additional validation for rar volumes | ⏳ | - | P2 | Cherry-pick | Low |
+| `7953211` | Added additional validation for rar volumes | ✅ | `c544419` | P2 | Cherry-pick | None |
 | `aca8eac` | Fixed bug in GetQueueController when requesting non-first page | ✅ | `713338f` | P2 | Cherry-pick | None |
 | `0cca3dd` | Fixed bug when updating upload-category dropdown while uploads active | ⏳ | - | P2 | Cherry-pick | None |
 | `326be3f` | Fixed identifying root-cause exceptions | ✅ | `e52fc7b` | P2 | Cherry-pick | None |
@@ -54,7 +75,7 @@ The upstream repository has 52 new commits in the last week. This document analy
 | Commit | Description | Status | Fork Commit | Priority | Approach | Conflicts |
 |--------|-------------|--------|-------------|----------|----------|-----------|
 | `e46125e` | Do not retry nntp command when cancellation is requested | ⚠️ | `befdd3d` | P1 | Manual | **HIGH** - We have different circuit breaker approach |
-| `9a66a24` | Ensure backend-proxied connections are closed correctly on errors | ⏳ | - | P2 | Cherry-pick | Low - frontend/server/app.ts |
+| `9a66a24` | Ensure backend-proxied connections are closed correctly on errors | ✅ | `16239ad` | P2 | Cherry-pick | None |
 | `b51ae7e` | Added logic to replace unhealthy Nntp connections | ⚠️ | `bb146dd` | P2 | Review | We have circuit breaker fixes |
 | `d7b5153` | Minor refactor to nntp-retry logic | ⏳ | - | P3 | Review | Check compatibility |
 | `9461b11` | Changed log-level to debug for logs relating to retried nntp commands | ❌ | - | P4 | Skip | We have our own logging |
@@ -67,20 +88,20 @@ The upstream repository has 52 new commits in the last week. This document analy
 
 | Commit | Description | Status | Fork Commit | Priority | Approach | Conflicts |
 |--------|-------------|--------|-------------|----------|----------|-----------|
-| `42fe84b` | Migrate old health-check setting to new per-category format | ⏳ | - | P2 | Manual | Review migration logic |
-| `35139db` | Support per-category health checks during queue processing | ⏳ | - | P2 | Manual | Check HealthCheckService conflicts |
-| `61eaf60` | Added UI setting for health-check categories | ⏳ | - | P2 | Manual | UI conflicts possible |
-| `799c5af` | Added MultiCheckboxInput component | ⏳ | - | P2 | Cherry-pick | None |
-| `392aadc` | Added support for sabnzbd `get_cats` api | ⏳ | - | P2 | Cherry-pick | None |
+| `42fe84b` | Migrate old health-check setting to new per-category format | ✅ | `599cfb3` | P2 | Cherry-pick | None |
+| `35139db` | Support per-category health checks during queue processing | ✅ | `4b00fee` | P2 | Cherry-pick | None |
+| `61eaf60` | Added UI setting for health-check categories | ✅ | `020949d` | P2 | Cherry-pick | None |
+| `799c5af` | Added MultiCheckboxInput component | ✅ | `6df6f05` | P2 | Cherry-pick | None |
+| `392aadc` | Added support for sabnzbd `get_cats` api | ✅ | `33ef4e4` | P2 | Cherry-pick | None |
 
 ### 2.2 File Filtering with Wildcards (P3)
 
 | Commit | Description | Status | Fork Commit | Priority | Approach | Conflicts |
 |--------|-------------|--------|-------------|----------|----------|-----------|
-| `3c0c6cc` | Migrate blocklisted-extensions to blocklisted-files format | ⏳ | - | P3 | Cherry-pick | None |
-| `b179693` | Added support for file filtering with wildcard patterns | ⏳ | - | P3 | Cherry-pick | None |
-| `dcf111b` | Added TagInput component | ⏳ | - | P3 | Cherry-pick | None |
-| `dab4f2f` | Updated UI for 'Ignored Files' setting | ⏳ | - | P3 | Cherry-pick | None |
+| `3c0c6cc` | Migrate blocklisted-extensions to blocklisted-files format | ✅ | `da5fc52` | P3 | Cherry-pick | None |
+| `b179693` | Added support for file filtering with wildcard patterns | ✅ | `da07733` | P3 | Cherry-pick | None |
+| `dcf111b` | Added TagInput component | ✅ | `902d369` | P3 | Cherry-pick | None |
+| `dab4f2f` | Updated UI for 'Ignored Files' setting | ✅ | `36896fd` | P3 | Cherry-pick | None |
 | `dff0ec0` | Updated UI for 'Categories' setting | ⏳ | - | P3 | Cherry-pick | None |
 
 ### 2.3 BlobStore for NZB Storage (P3 - Infrastructure)
@@ -157,9 +178,9 @@ The upstream repository has 52 new commits in the last week. This document analy
 
 | Commit | Description | Status | Fork Commit | Priority | Approach | Conflicts |
 |--------|-------------|--------|-------------|----------|----------|-----------|
-| `3ba1518` | Updated default user-agent to nzbdav/{version} | ⏳ | - | P4 | Cherry-pick | None |
-| `b13f20b` | Updated AddUrl api to fallback to url for nzb filename | ⏳ | - | P4 | Cherry-pick | None |
-| `edf14e6` | Allow saving provider without testing, if disabled | ⏳ | - | P3 | Cherry-pick | None |
+| `3ba1518` | Updated default user-agent to nzbdav/{version} | ✅ | `4102979` | P4 | Cherry-pick | None |
+| `b13f20b` | Updated AddUrl api to fallback to url for nzb filename | ✅ | `aa4da91` | P4 | Cherry-pick | None |
+| `edf14e6` | Allow saving provider without testing, if disabled | ✅ | `333150b` | P3 | Cherry-pick | None |
 | `04d61d8` | Updated Arr automatic-queue-management options | ⏳ | - | P3 | Review | Check compatibility |
 
 ### 4.4 Entrypoint Fix (P2)
@@ -187,33 +208,33 @@ The upstream repository has 52 new commits in the last week. This document analy
 
 ## Recommended Integration Order
 
-### Phase 1: Critical Bug Fixes (Do First)
-1. `23d8541` - Cannot find byte position bug
-2. `7966414` - Rar part numbers bug
-3. `686878b` - Par2 relative paths
-4. `7953211` - Rar volume validation
-5. `aca8eac` - GetQueueController pagination bug
-6. `326be3f` - Root-cause exceptions
+### Phase 1: Critical Bug Fixes ✅ COMPLETED
+1. ✅ `23d8541` - Cannot find byte position bug
+2. ✅ `7966414` - Rar part numbers bug
+3. ✅ `686878b` - Par2 relative paths
+4. ✅ `7953211` - Rar volume validation
+5. ✅ `aca8eac` - GetQueueController pagination bug
+6. ✅ `326be3f` - Root-cause exceptions
 
-### Phase 2: Connection Fixes (Careful Review)
-1. `9a66a24` - Backend proxy connection cleanup
-2. `e46125e` - NNTP cancellation handling (MANUAL - conflicts with our changes)
-3. `b51ae7e` - Unhealthy connection replacement (REVIEW)
+### Phase 2: Connection Fixes (Partial)
+1. ✅ `9a66a24` - Backend proxy connection cleanup
+2. ⚠️ `e46125e` - NNTP cancellation handling (SKIP - conflicts with our circuit breaker)
+3. ⚠️ `b51ae7e` - Unhealthy connection replacement (SKIP - we have different approach)
 
-### Phase 3: High-Value Features
-1. Per-category health checks (5 commits)
-2. Mobile upload support (4 commits)
-3. `edf14e6` - Save disabled provider without testing
+### Phase 3: High-Value Features ✅ COMPLETED
+1. ✅ Per-category health checks (5 commits)
+2. ⏳ Mobile upload support (4 commits) - DEFERRED (entangled with UI changes)
+3. ✅ `edf14e6` - Save disabled provider without testing
 
-### Phase 4: Nice-to-Have
-1. File filtering wildcards (5 commits)
-2. UI improvements (selected)
-3. UsenetSharp updates
+### Phase 4: Nice-to-Have ✅ COMPLETED
+1. ✅ File filtering wildcards (4 commits)
+2. ❌ UI improvements - SKIPPED (entangled with mobile upload)
+3. ⏳ UsenetSharp updates
 
 ### Phase 5: Major Refactors (Defer)
-1. BlobStore infrastructure (6 commits) - assess value first
-2. Custom NZB parser - major change, assess benefit
-3. Hosted services refactor - conflicts with our services
+1. ⏳ BlobStore infrastructure (6 commits) - assess value first
+2. ⏳ Custom NZB parser - major change, assess benefit
+3. ❌ Hosted services refactor - conflicts with our services
 
 ---
 
