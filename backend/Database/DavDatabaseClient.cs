@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Database.Models;
 
@@ -76,7 +77,7 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     }
 
     // queue
-    public async Task<(QueueItem? queueItem, QueueNzbContents? queueNzbContents)> GetTopQueueItem
+    public async Task<(QueueItem? queueItem, Stream? queueNzbStream)> GetTopQueueItem
     (
         CancellationToken ct = default
     )
@@ -102,16 +103,36 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             Serilog.Log.Debug("[DavDatabaseClient] No queue items available");
         }
 
-        var queueNzbContents = queueItem != null
-            ? await Ctx.QueueNzbContents.AsNoTracking().FirstOrDefaultAsync(q => q.Id == queueItem.Id, ct).ConfigureAwait(false)
+        // Attempt to read NZB contents from blob-store first
+        var queueNzbStream = queueItem != null
+            ? BlobStore.ReadBlob(queueItem.Id)
             : null;
 
-        if (queueItem != null && queueNzbContents == null)
+        // Fallback: read NZB contents from database if not in blob-store
+        if (queueItem != null && queueNzbStream == null)
         {
-            Serilog.Log.Warning("[DavDatabaseClient] Found queue item {Id} but no NZB contents!", queueItem.Id);
+            var queueNzbContents = await Ctx.QueueNzbContents
+                .AsNoTracking()
+                .FirstOrDefaultAsync(q => q.Id == queueItem.Id, ct)
+                .ConfigureAwait(false);
+
+            if (queueNzbContents != null)
+            {
+                Serilog.Log.Debug("[DavDatabaseClient] NZB contents found in database for {Id}, size: {Size} bytes",
+                    queueItem.Id, queueNzbContents.NzbContents.Length);
+                queueNzbStream = new MemoryStream(Encoding.UTF8.GetBytes(queueNzbContents.NzbContents));
+            }
+            else
+            {
+                Serilog.Log.Warning("[DavDatabaseClient] Found queue item {Id} but no NZB contents in blob-store or database!", queueItem.Id);
+            }
+        }
+        else if (queueItem != null && queueNzbStream != null)
+        {
+            Serilog.Log.Debug("[DavDatabaseClient] NZB contents found in blob-store for {Id}", queueItem.Id);
         }
 
-        return (queueItem, queueNzbContents);
+        return (queueItem, queueNzbStream);
     }
 
     public Task<QueueItem[]> GetQueueItems

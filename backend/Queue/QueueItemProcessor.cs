@@ -26,7 +26,7 @@ namespace NzbWebDAV.Queue;
 
 public class QueueItemProcessor(
     QueueItem queueItem,
-    QueueNzbContents queueNzbContents,
+    Stream queueNzbStream,
     IServiceScopeFactory scopeFactory,
     UsenetStreamingClient usenetClient,
     ConfigManager configManager,
@@ -37,6 +37,9 @@ public class QueueItemProcessor(
     CancellationToken ct
 )
 {
+    // Store NZB contents for history (read from stream before parsing)
+    private string? _nzbContents;
+
     public async Task ProcessAsync()
     {
         Log.Warning("!!! DEBUG: QueueItemProcessor STARTING for {JobName} ({Id}) !!!", queueItem.JobName, queueItem.Id);
@@ -169,13 +172,13 @@ public class QueueItemProcessor(
         using var _1 = queueCts.Token.SetScopedContext(new ConnectionUsageContext(ConnectionUsageType.Queue, queueItem.JobName));
         var queueCt = queueCts.Token;
 
-        // read the nzb document
-        Log.Debug("[QueueItemProcessor] Parsing NZB document for {JobName}. NZB size: {NzbSizeBytes} bytes",
-            queueItem.JobName, queueNzbContents.NzbContents.Length);
+        // read the nzb document - first read stream contents for history storage
+        Log.Debug("[QueueItemProcessor] Parsing NZB document for {JobName}", queueItem.JobName);
         var parseStartTime = DateTime.UtcNow;
-        var documentBytes = Encoding.UTF8.GetBytes(queueNzbContents.NzbContents);
-        using var stream = new MemoryStream(documentBytes);
-        var nzb = await NzbDocument.LoadAsync(stream).ConfigureAwait(false);
+        using var streamReader = new StreamReader(queueNzbStream, Encoding.UTF8, leaveOpen: false);
+        _nzbContents = await streamReader.ReadToEndAsync(queueCt).ConfigureAwait(false);
+        using var memoryStream = new MemoryStream(Encoding.UTF8.GetBytes(_nzbContents));
+        var nzb = await NzbDocument.LoadAsync(memoryStream).ConfigureAwait(false);
         // Check filename for password first (e.g., "Movie.Name{{password}}.nzb" or "Movie.Name password=secret.nzb")
         // Fall back to NZB metadata if not found in filename
         var archivePassword = FilenameUtil.GetNzbPassword(queueItem.FileName)
@@ -543,7 +546,7 @@ public class QueueItemProcessor(
             DownloadTimeSeconds = (int)(DateTime.Now - jobStartTime).TotalSeconds,
             FailMessage = errorMessage,
             DownloadDirId = mountFolder?.Id,
-            NzbContents = queueNzbContents.NzbContents,
+            NzbContents = _nzbContents,
             FailureReason = failureReason,
         };
     }

@@ -115,15 +115,15 @@ public class QueueManager : IDisposable
                 // get the next queue-item from the database
                 Log.Debug("[QueueManager] Fetching next queue item from database...");
                 QueueItem? queueItem = null;
-                QueueNzbContents? queueNzbContents = null;
+                Stream? queueNzbStream = null;
 
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var dbClient = scope.ServiceProvider.GetRequiredService<DavDatabaseClient>();
-                    (queueItem, queueNzbContents) = await LockAsync(() => dbClient.GetTopQueueItem(ct)).ConfigureAwait(false);
+                    (queueItem, queueNzbStream) = await LockAsync(() => dbClient.GetTopQueueItem(ct)).ConfigureAwait(false);
                 }
 
-                if (queueItem is null || queueNzbContents is null)
+                if (queueItem is null || queueNzbStream is null)
                 {
                     Log.Debug("[QueueManager] No queue items available, sleeping for 1 minute...");
                     try
@@ -148,12 +148,13 @@ public class QueueManager : IDisposable
                 Log.Information("[QueueManager] Starting to process queue item: {QueueItemId}, Name: {QueueItemJobName}, Priority: {Priority}, PauseUntil: {PauseUntil}",
                     queueItem.Id, queueItem.JobName, queueItem.Priority, queueItem.PauseUntil);
                 // process the queue-item
+                await using var queueNzbStreamDispose = queueNzbStream;
                 using var queueItemCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 await LockAsync(() =>
                 {
                     Log.Debug("[QueueManager] Beginning processing task for queue item: {QueueItemId}", queueItem.Id);
                     _inProgressQueueItem = BeginProcessingQueueItem(
-                        _scopeFactory, queueItem, queueNzbContents, queueItemCancellationTokenSource
+                        _scopeFactory, queueItem, queueNzbStreamDispose, queueItemCancellationTokenSource
                     );
                 }).ConfigureAwait(false);
 
@@ -204,13 +205,13 @@ public class QueueManager : IDisposable
     (
         IServiceScopeFactory scopeFactory,
         QueueItem queueItem,
-        QueueNzbContents queueNzbContents,
+        Stream queueNzbStream,
         CancellationTokenSource cts
     )
     {
         var progressHook = new Progress<int>();
         var task = new QueueItemProcessor(
-            queueItem, queueNzbContents, scopeFactory, _usenetClient, 
+            queueItem, queueNzbStream, scopeFactory, _usenetClient,
             _configManager, _websocketManager, _healthCheckService, _rcloneRcService,
             progressHook, cts.Token
         ).ProcessAsync();
