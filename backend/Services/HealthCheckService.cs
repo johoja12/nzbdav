@@ -29,6 +29,7 @@ public class HealthCheckService
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ProviderErrorService _providerErrorService;
     private readonly NzbAnalysisService _nzbAnalysisService;
+    private readonly RcloneRcService _rcloneRcService;
     private readonly CancellationToken _cancellationToken = SigtermUtil.GetCancellationToken();
 
     private readonly ConcurrentDictionary<string, byte> _missingSegmentIds = new();
@@ -43,7 +44,8 @@ public class HealthCheckService
         WebsocketManager websocketManager,
         IServiceScopeFactory serviceScopeFactory,
         ProviderErrorService providerErrorService,
-        NzbAnalysisService nzbAnalysisService
+        NzbAnalysisService nzbAnalysisService,
+        RcloneRcService rcloneRcService
     )
     {
         _configManager = configManager;
@@ -52,6 +54,7 @@ public class HealthCheckService
         _serviceScopeFactory = serviceScopeFactory;
         _providerErrorService = providerErrorService;
         _nzbAnalysisService = nzbAnalysisService;
+        _rcloneRcService = rcloneRcService;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
@@ -675,6 +678,7 @@ public class HealthCheckService
                 }));
                 await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                 await _providerErrorService.ClearErrorsForFile(davItem.Path).ConfigureAwait(false);
+                await _rcloneRcService.ForgetAllInstancesAsync(davItem.Id, davItem.Path).ConfigureAwait(false);
                 return;
             }
 
@@ -702,6 +706,7 @@ public class HealthCheckService
                 }));
                 await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                 await _providerErrorService.ClearErrorsForFile(davItem.Path).ConfigureAwait(false);
+                await _rcloneRcService.ForgetAllInstancesAsync(davItem.Id, davItem.Path).ConfigureAwait(false);
                 return;
             }
 
@@ -780,6 +785,7 @@ public class HealthCheckService
                         }));
                         await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
                         await _providerErrorService.ClearErrorsForFile(davItem.Path).ConfigureAwait(false);
+                        await _rcloneRcService.ForgetAllInstancesAsync(davItem.Id, davItem.Path).ConfigureAwait(false);
                         return;
                     }
                 }
@@ -835,6 +841,7 @@ public class HealthCheckService
             }));
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
             await _providerErrorService.ClearErrorsForFile(davItem.Path).ConfigureAwait(false);
+            await _rcloneRcService.ForgetAllInstancesAsync(davItem.Id, davItem.Path).ConfigureAwait(false);
         }
         catch (HttpRequestException e)
         {

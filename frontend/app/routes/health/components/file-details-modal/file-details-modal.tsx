@@ -114,6 +114,12 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                         <td className={styles.labelCell}>Path</td>
                                         <td className={styles.valueCell}><small>{fileDetails.path}</small></td>
                                     </tr>
+                                    {fileDetails.idsPath && (
+                                        <tr>
+                                            <td className={styles.labelCell}>IDs Path</td>
+                                            <td className={styles.valueCell}><small className="text-info">{fileDetails.idsPath}</small></td>
+                                        </tr>
+                                    )}
                                     <tr>
                                         <td className={styles.labelCell}>Mapped Path</td>
                                         <td className={styles.valueCell}>

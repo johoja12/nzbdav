@@ -137,10 +137,21 @@ function Body(props: ExplorePageData) {
         setSelectedFileDetails(null);
 
         try {
-            const response = await fetch(`/api/file-details/${davItemId}`);
+            // OPTIMIZATION: First fetch with skip_cache for faster initial load
+            const response = await fetch(`/api/file-details/${davItemId}?skip_cache`);
             if (response.ok) {
                 const fileDetails = await response.json();
                 setSelectedFileDetails(fileDetails);
+
+                // Then fetch full cache status in background
+                fetch(`/api/file-details/${davItemId}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(fullDetails => {
+                        if (fullDetails) {
+                            setSelectedFileDetails(prev => prev?.davItemId === fullDetails.davItemId ? fullDetails : prev);
+                        }
+                    })
+                    .catch(() => {});
             } else {
                 console.error('Failed to fetch file details:', await response.text());
             }

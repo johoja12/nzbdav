@@ -161,6 +161,68 @@ public class RcloneClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Forget (flush) a file from the VFS cache.
+    /// </summary>
+    public async Task<bool> VfsForgetAsync(string path, CancellationToken ct = default)
+    {
+        try
+        {
+            await PostAsync<object, object>("vfs/forget", new { fs = _instance.RemoteName, file = path.TrimStart('/') }, ct).ConfigureAwait(false);
+            Log.Information("[RcloneClient] VFS forget succeeded for {Instance}: {Path}", _instance.Name, path);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[RcloneClient] VFS forget failed for {Instance}: {Path}", _instance.Name, path);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Delete a file from the VFS disk cache if configured.
+    /// </summary>
+    public void DeleteFromDiskCache(string path)
+    {
+        if (string.IsNullOrEmpty(_instance.VfsCachePath))
+            return;
+
+        try
+        {
+            var relativePath = path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+            if (string.IsNullOrEmpty(relativePath))
+                return;
+
+            var remoteName = _instance.RemoteName.TrimEnd(':');
+            var possiblePaths = new[]
+            {
+                Path.Combine(_instance.VfsCachePath, "vfs", remoteName, relativePath),
+                Path.Combine(_instance.VfsCachePath, remoteName, relativePath),
+            };
+
+            foreach (var cachePath in possiblePaths)
+            {
+                if (File.Exists(cachePath))
+                {
+                    Log.Information("[RcloneClient] Deleting cached file from {Instance}: {Path}", _instance.Name, cachePath);
+                    File.Delete(cachePath);
+                }
+
+                // Also check vfsMeta for metadata files
+                var vfsMetaPath = Path.Combine(_instance.VfsCachePath, "vfsMeta", remoteName, relativePath);
+                if (File.Exists(vfsMetaPath))
+                {
+                    Log.Information("[RcloneClient] Deleting cached metadata from {Instance}: {Path}", _instance.Name, vfsMetaPath);
+                    File.Delete(vfsMetaPath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[RcloneClient] Failed to delete cache file for {Instance}: {Path}", _instance.Name, path);
+        }
+    }
+
     public async Task<List<string>> ListRemotesAsync(CancellationToken ct = default)
     {
         try

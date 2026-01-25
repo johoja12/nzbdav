@@ -27,7 +27,7 @@ public class WebDavWriteLoggingMiddleware
             var path = context.Request.Path;
             var userAgent = context.Request.Headers.UserAgent.ToString();
 
-            Log.Warning("[WebDAV Write] {Method} {Path} from {ClientIp} (UA: {UserAgent})",
+            Log.Debug("[WebDAV Write] {Method} {Path} from {ClientIp} (UA: {UserAgent})",
                 method, path, clientIp, userAgent);
         }
 

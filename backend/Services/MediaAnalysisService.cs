@@ -27,11 +27,12 @@ public class MediaAnalysisService(
         var item = await dbContext.Items.FindAsync([davItemId], ct);
         if (item == null) return MediaAnalysisResult.Failed;
 
-        // 2. Construct Path
+        // 2. Construct Path using .ids format (more reliable than /content/ path)
+        // .ids path format: .ids/a/b/c/d/e/abcde123-4567-...
         var mountDir = configManager.GetRcloneMountDir();
-        // Remove leading slash from Item.Path to ensure Path.Combine works correctly
-        var relPath = item.Path.TrimStart('/');
-        var fullPath = Path.Combine(mountDir, relPath);
+        var idStr = item.Id.ToString();
+        var idsPath = ".ids/" + string.Join("/", idStr.Take(5).Select(c => c.ToString())) + "/" + idStr;
+        var fullPath = Path.Combine(mountDir, idsPath);
 
         // Check file existence (optional, but good for debugging)
         // Note: File.Exists might hang if Fuse is stuck, so maybe skip or use with timeout?

@@ -26,9 +26,19 @@ public abstract class BaseAggregator
         var pathSegments = relativePath
             .Split(DirectorySeparators, StringSplitOptions.RemoveEmptyEntries)
             .ToArray();
+
+        // Skip leading folder if it matches the mount directory name (prevents duplicate nested folders)
+        // This can happen when archives contain a root folder with the same name as the release
+        var startIndex = 0;
+        if (pathSegments.Length > 1 &&
+            string.Equals(pathSegments[0], MountDirectory.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            startIndex = 1;
+        }
+
         var parentDirectory = MountDirectory;
         var pathKey = "";
-        for (var i = 0; i < pathSegments.Length - 1; i++)
+        for (var i = startIndex; i < pathSegments.Length - 1; i++)
         {
             pathKey = Path.Join(pathKey, pathSegments[i]);
             parentDirectory = EnsureDirectory(parentDirectory, pathSegments[i], pathKey);

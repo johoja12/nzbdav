@@ -25,7 +25,10 @@ public class DatabaseStoreSymlinkCollection(
 
     protected override async Task<IStoreItem?> GetItemAsync(GetItemRequest request)
     {
-        if (DeletedFiles.IsDeleted(request.Name)) return null;
+        // NOTE: We intentionally do NOT check DeletedFiles here.
+        // The deleted cache is only for hiding items from directory listings (GetAllItemsAsync).
+        // Direct access must always work to support concurrent delete operations from multiple
+        // rclone instances (each instance does its own DELETE which must succeed).
         if (configManager.HideSamples() && request.Name.Contains(".sample.", StringComparison.OrdinalIgnoreCase))
             return null;
 

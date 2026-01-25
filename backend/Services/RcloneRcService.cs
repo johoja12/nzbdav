@@ -2,12 +2,16 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using NzbWebDAV.Clients;
 using NzbWebDAV.Config;
+using NzbWebDAV.Database;
 using Serilog;
 
 namespace NzbWebDAV.Services;
 
-public class RcloneRcService(ConfigManager configManager, IHttpClientFactory httpClientFactory)
+public class RcloneRcService(ConfigManager configManager, IHttpClientFactory httpClientFactory, IServiceScopeFactory serviceScopeFactory)
 {
     private const string RefreshEndpoint = "vfs/refresh";
     private const string ForgetEndpoint = "vfs/forget";
@@ -56,6 +60,68 @@ public class RcloneRcService(ConfigManager configManager, IHttpClientFactory htt
         }
 
         return allSuccess;
+    }
+
+    /// <summary>
+    /// Flushes Rclone VFS cache for a file across ALL configured Rclone instances.
+    /// This should be called after repairs to ensure all clients see the updated state.
+    /// </summary>
+    /// <param name="davItemId">The DavItem ID (used to construct .ids path)</param>
+    /// <param name="contentPath">The content path (e.g., /content/movies/Movie/file.mkv)</param>
+    public async Task ForgetAllInstancesAsync(Guid davItemId, string contentPath)
+    {
+        try
+        {
+            using var scope = serviceScopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+
+            // Get all enabled Rclone instances with dir refresh enabled
+            var instances = await dbContext.RcloneInstances
+                .AsNoTracking()
+                .Where(i => i.IsEnabled && i.EnableDirRefresh)
+                .ToListAsync()
+                .ConfigureAwait(false);
+
+            if (instances.Count == 0)
+            {
+                Log.Debug("[RcloneRc] No Rclone instances configured for dir refresh, skipping cache flush");
+                return;
+            }
+
+            // Build paths to flush
+            var idStr = davItemId.ToString();
+            var idsPath = ".ids/" + string.Join("/", idStr.Take(5).Select(c => c.ToString())) + "/" + idStr;
+            var normalizedContentPath = contentPath.TrimStart('/');
+
+            Log.Information("[RcloneRc] Flushing cache for {ItemId} across {Count} Rclone instances", davItemId, instances.Count);
+
+            var tasks = instances.Select(async instance =>
+            {
+                try
+                {
+                    using var client = new RcloneClient(instance);
+
+                    // Forget both the .ids path and content path
+                    await client.VfsForgetAsync(idsPath).ConfigureAwait(false);
+                    await client.VfsForgetAsync(normalizedContentPath).ConfigureAwait(false);
+
+                    // Also delete from disk cache
+                    client.DeleteFromDiskCache(idsPath);
+                    client.DeleteFromDiskCache(normalizedContentPath);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[RcloneRc] Failed to flush cache on instance {Instance}", instance.Name);
+                }
+            });
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+            Log.Information("[RcloneRc] Cache flush completed for {ItemId}", davItemId);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "[RcloneRc] Failed to flush cache across instances for {ItemId}", davItemId);
+        }
     }
 
     /// <summary>

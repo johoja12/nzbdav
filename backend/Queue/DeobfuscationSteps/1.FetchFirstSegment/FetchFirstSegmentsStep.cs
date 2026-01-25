@@ -138,6 +138,53 @@ public static class FetchFirstSegmentsStep
         var startTime = DateTimeOffset.UtcNow;
         logger.Debug("Starting: {FileName}", nzbFile.FileName);
 
+        // Retry logic for transient errors (timeouts)
+        const int maxRetries = 3;
+        var attempt = 0;
+        Exception? lastException = null;
+
+        while (attempt < maxRetries)
+        {
+            attempt++;
+            try
+            {
+                return await FetchFirstSegmentAttempt(nzbFile, client, configManager, cancellationToken, logger).ConfigureAwait(false);
+            }
+            catch (TimeoutException ex) when (attempt < maxRetries)
+            {
+                lastException = ex;
+                logger.Warning("Timeout fetching first segment for {FileName} (attempt {Attempt}/{MaxRetries}): {Error}",
+                    nzbFile.FileName, attempt, maxRetries, ex.Message);
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw; // Don't retry if the parent token is cancelled
+            }
+            catch (OperationCanceledException ex) when (attempt < maxRetries && !cancellationToken.IsCancellationRequested)
+            {
+                // Timeout via CTS cancellation
+                lastException = ex;
+                logger.Warning("Timeout (cancelled) fetching first segment for {FileName} (attempt {Attempt}/{MaxRetries}): {Error}",
+                    nzbFile.FileName, attempt, maxRetries, ex.Message);
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // All retries exhausted
+        throw lastException ?? new TimeoutException($"Failed to fetch first segment for {nzbFile.FileName} after {maxRetries} attempts");
+    }
+
+    private static async Task<NzbFileWithFirstSegment> FetchFirstSegmentAttempt
+    (
+        NzbFile nzbFile,
+        UsenetStreamingClient client,
+        ConfigManager configManager,
+        CancellationToken cancellationToken,
+        ComponentLogger logger
+    )
+    {
+        var startTime = DateTimeOffset.UtcNow;
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

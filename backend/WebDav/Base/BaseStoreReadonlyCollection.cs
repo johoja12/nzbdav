@@ -33,7 +33,8 @@ public abstract class BaseStoreReadonlyCollection : BaseStoreCollection
 
     protected override Task<DavStatusCode> DeleteItemAsync(DeleteItemRequest request)
     {
-        Log.Warning($"Cannot delete `{request.Name}`: Forbidden");
+        Log.Warning("[BaseReadonlyCollection] Cannot delete '{Name}' from collection type {CollectionType}: Forbidden",
+            request.Name, GetType().Name);
         return Task.FromResult(DavStatusCode.Forbidden);
     }
 }

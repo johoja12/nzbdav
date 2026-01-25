@@ -282,7 +282,7 @@ public class NzbFileStream : Stream
 
             var detailsObj = new ConnectionUsageDetails
             {
-                Text = _usageContext.Details ?? "",
+                Text = _usageContext.DetailsObject?.Text ?? "",
                 JobName = _usageContext.DetailsObject?.JobName,
                 AffinityKey = _usageContext.DetailsObject?.AffinityKey,
                 DavItemId = _usageContext.DetailsObject?.DavItemId,
@@ -297,7 +297,7 @@ public class NzbFileStream : Stream
             // Extract the folder name from path (e.g., /content/movies/Movie.Name.2025.../obfuscated.mkv -> Movie.Name.2025...)
             // This is needed because NZB files often have obfuscated filenames but proper folder names
             string? fileName = null;
-            var fullPath = _usageContext.Details;
+            var fullPath = _usageContext.DetailsObject?.Text;
             if (!string.IsNullOrEmpty(fullPath))
             {
                 var pathParts = fullPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -306,7 +306,7 @@ public class NzbFileStream : Stream
                     fileName = pathParts[2]; // The job/folder name (e.g., "Movie.Name.2025.WEB-DL...")
                 }
             }
-            fileName ??= _usageContext.DetailsObject?.JobName ?? _usageContext.Details;
+            fileName ??= _usageContext.DetailsObject?.JobName ?? _usageContext.DetailsObject?.Text;
 
             // Determine playback status from media servers
             var plexPlaying = PlexVerificationService.Instance?.IsFilePlaying(fileName);

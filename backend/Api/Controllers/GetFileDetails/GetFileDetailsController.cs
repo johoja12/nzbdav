@@ -27,20 +27,22 @@ public class GetFileDetailsController(
             return BadRequest(new { error = "Invalid DavItemId" });
         }
 
-        var davItem = await dbClient.Ctx.Items
-            .FirstOrDefaultAsync(x => x.Id == itemGuid)
-            .ConfigureAwait(false);
+        // Check for skip_cache query param to speed up initial load
+        var skipCache = Request.Query.ContainsKey("skip_cache");
+
+        // OPTIMIZATION: Run initial queries in parallel
+        var davItemTask = dbClient.Ctx.Items.FirstOrDefaultAsync(x => x.Id == itemGuid);
+        var nzbFileTask = dbClient.Ctx.NzbFiles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == itemGuid);
+
+        await Task.WhenAll(davItemTask, nzbFileTask).ConfigureAwait(false);
+
+        var davItem = davItemTask.Result;
+        var nzbFile = nzbFileTask.Result;
 
         if (davItem == null)
         {
             return NotFound(new { error = "File not found" });
         }
-
-        // Get the associated NZB file if it exists
-        var nzbFile = await dbClient.Ctx.NzbFiles
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == itemGuid)
-            .ConfigureAwait(false);
 
         // JobName in NzbProviderStats is the full file path (davItem.Path)
         // JobName in QueueItems/HistoryItems is the directory name
@@ -50,19 +52,57 @@ public class GetFileDetailsController(
 
         Serilog.Log.Debug("[GetFileDetails] Fetching stats for Path='{Path}' and Job='{Job}'", providerStatsJobName, queueJobName);
 
-        // Get provider stats from database (check both keys)
-        var dbProviderStats = await dbClient.Ctx.NzbProviderStats
+        // OPTIMIZATION: Run second batch of queries in parallel
+        var dbProviderStatsTask = dbClient.Ctx.NzbProviderStats
             .AsNoTracking()
             .Where(x => x.JobName == providerStatsJobName || (queueJobName != null && x.JobName == queueJobName))
-            .ToListAsync()
-            .ConfigureAwait(false);
+            .ToListAsync();
 
-        // Get live stats from affinity service (check both keys)
+        var missingArticleSummariesTask = dbClient.Ctx.MissingArticleSummaries
+            .AsNoTracking()
+            .Where(x => x.DavItemId == itemGuid)
+            .ToListAsync();
+
+        var latestHealthCheckTask = dbClient.Ctx.HealthCheckResults
+            .AsNoTracking()
+            .Where(x => x.DavItemId == itemGuid)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        var mappedLinkTask = dbClient.Ctx.LocalLinks
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.DavItemId == itemGuid);
+
+        var queueItemTask = dbClient.Ctx.QueueItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.JobName == queueJobName);
+
+        var historyItemTask = dbClient.Ctx.HistoryItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.JobName == queueJobName);
+
+        // Wait for all parallel queries
+        await Task.WhenAll(
+            dbProviderStatsTask,
+            missingArticleSummariesTask,
+            latestHealthCheckTask,
+            mappedLinkTask,
+            queueItemTask,
+            historyItemTask
+        ).ConfigureAwait(false);
+
+        var dbProviderStats = dbProviderStatsTask.Result;
+        var missingArticleSummaries = missingArticleSummariesTask.Result;
+        var latestHealthCheck = latestHealthCheckTask.Result;
+        var mappedLink = mappedLinkTask.Result;
+        var queueItem = queueItemTask.Result;
+        var historyItem = historyItemTask.Result;
+
+        // Get live stats from affinity service (check both keys) - this is in-memory, very fast
         var liveProviderStats = affinityService.GetJobStats(providerStatsJobName);
         if (queueJobName != null)
         {
             var jobStats = affinityService.GetJobStats(queueJobName);
-            // Serilog.Log.Information("[GetFileDetails] Live Stats - Path: {PathCount}, Job: {JobCount}", liveProviderStats.Count, jobStats.Count);
             foreach (var kvp in jobStats)
             {
                 if (!liveProviderStats.ContainsKey(kvp.Key))
@@ -71,20 +111,13 @@ public class GetFileDetailsController(
                 }
                 else
                 {
-                    // If we have stats for both, merge them (summing up counts/bytes)
-                    // Note: This is a simplification. Ideally we'd want weighted averages for speeds.
-                    // For now, let's trust the Path-specific stats (Streaming) over Job stats if both exist?
-                    // Actually, usually only one is active/populated significantly.
-                    // Let's just accumulate counts to show total activity.
                     var existing = liveProviderStats[kvp.Key];
                     var incoming = kvp.Value;
                     existing.SuccessfulSegments += incoming.SuccessfulSegments;
                     existing.FailedSegments += incoming.FailedSegments;
                     existing.TotalBytes += incoming.TotalBytes;
                     existing.TotalTimeMs += incoming.TotalTimeMs;
-                    // Keep the most recent LastUsed
                     if (incoming.LastUsed > existing.LastUsed) existing.LastUsed = incoming.LastUsed;
-                    // Speed: Use the higher one? Or average? Let's use the one from the most recent activity.
                     if (incoming.LastUsed > existing.LastUsed) existing.RecentAverageSpeedBps = incoming.RecentAverageSpeedBps;
                 }
             }
@@ -92,9 +125,8 @@ public class GetFileDetailsController(
 
         // Merge database and live stats (live stats take precedence)
         var mergedStats = new Dictionary<int, NzbProviderStats>();
-        
-        // First merge DB stats (accumulating if multiple entries for same provider exist due to different JobNames)
-        foreach (var stat in dbProviderStats) 
+
+        foreach (var stat in dbProviderStats)
         {
             if (mergedStats.TryGetValue(stat.ProviderIndex, out var existing))
             {
@@ -109,8 +141,7 @@ public class GetFileDetailsController(
                 mergedStats[stat.ProviderIndex] = stat;
             }
         }
-        
-        // Then overwrite/update with live stats
+
         foreach (var kvp in liveProviderStats) mergedStats[kvp.Key] = kvp.Value;
 
         Serilog.Log.Debug("[GetFileDetails] Merged Stats Summary: {Count} providers. TotalBytes: {TotalBytes}",
@@ -122,17 +153,7 @@ public class GetFileDetailsController(
             .Select((p, index) => new { Index = index, Host = p.Host })
             .ToDictionary(x => x.Index, x => x.Host);
 
-        // Get missing article count from summaries (events aren't stored to save space)
-        // There could be multiple summaries for the same DavItemId (different filenames/paths)
-        var missingArticleSummaries = await dbClient.Ctx.MissingArticleSummaries
-            .AsNoTracking()
-            .Where(x => x.DavItemId == itemGuid)
-            .ToListAsync()
-            .ConfigureAwait(false);
-
-        // Only show count when HasBlockingMissingArticles is true
-        // This means the same segment was confirmed missing on ALL providers
-        // (ProviderErrorService sets both HasBlockingMissingArticles and IsCorrupted together)
+        // Calculate missing article count
         var missingArticleCount = 0;
         var hasBlocking = missingArticleSummaries.Any(s => s.HasBlockingMissingArticles);
 
@@ -140,28 +161,12 @@ public class GetFileDetailsController(
         {
             var totalEvents = missingArticleSummaries.Where(s => s.HasBlockingMissingArticles).Sum(s => s.TotalEvents);
             var providerCount = usenetConfig.Providers.Count;
-            // Estimate unique blocking segments: TotalEvents / providerCount (each blocking segment generates one error per provider)
             missingArticleCount = providerCount > 0
                 ? (int)Math.Ceiling((double)totalEvents / providerCount)
                 : totalEvents;
         }
 
-        // Get latest health check result
-        var latestHealthCheck = await dbClient.Ctx.HealthCheckResults
-            .AsNoTracking()
-            .Where(x => x.DavItemId == itemGuid)
-            .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync()
-            .ConfigureAwait(false);
-
-        // Get mapped path from LocalLinks
-        var mappedLink = await dbClient.Ctx.LocalLinks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.DavItemId == itemGuid)
-            .ConfigureAwait(false);
-
         // Generate download URL with token
-        // Normalize path to match GetWebdavItemRequest normalization (strip leading slash)
         var normalizedPath = davItem.Path.TrimStart('/');
         var apiKey = EnvironmentUtil.GetVariable("FRONTEND_BACKEND_API_KEY");
         var downloadKey = GetWebdavItemRequest.GenerateDownloadKey(apiKey, normalizedPath);
@@ -169,18 +174,6 @@ public class GetFileDetailsController(
 
         // Check if NZB download is available
         string? nzbDownloadUrl = null;
-        HistoryItem? historyItem = null;
-
-        var queueItem = await dbClient.Ctx.QueueItems
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.JobName == queueJobName)
-            .ConfigureAwait(false);
-
-        // Always try to fetch HistoryItem for ArrResolutionInfo (even if in queue)
-        historyItem = await dbClient.Ctx.HistoryItems
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.JobName == queueJobName)
-            .ConfigureAwait(false);
 
         if (queueItem != null)
         {
@@ -197,7 +190,7 @@ public class GetFileDetailsController(
             nzbDownloadUrl = $"/api/download-nzb/{davItem.Id}";
         }
 
-        // Fallback: If NZB not in Queue/History, check if we have any file metadata (Nzb, Rar, or Multipart) to generate from
+        // Fallback: If NZB not in Queue/History, check if we have any file metadata
         if (nzbDownloadUrl == null)
         {
             if (nzbFile != null)
@@ -206,19 +199,14 @@ public class GetFileDetailsController(
             }
             else
             {
-                // Check Rar/Multipart
-                var isRar = await dbClient.Ctx.RarFiles.AsNoTracking().AnyAsync(x => x.Id == itemGuid).ConfigureAwait(false);
-                if (isRar)
+                // OPTIMIZATION: Check Rar/Multipart in parallel
+                var isRarTask = dbClient.Ctx.RarFiles.AsNoTracking().AnyAsync(x => x.Id == itemGuid);
+                var isMultipartTask = dbClient.Ctx.MultipartFiles.AsNoTracking().AnyAsync(x => x.Id == itemGuid);
+                await Task.WhenAll(isRarTask, isMultipartTask).ConfigureAwait(false);
+
+                if (isRarTask.Result || isMultipartTask.Result)
                 {
                     nzbDownloadUrl = $"/api/download-nzb/{davItem.Id}";
-                }
-                else
-                {
-                    var isMultipart = await dbClient.Ctx.MultipartFiles.AsNoTracking().AnyAsync(x => x.Id == itemGuid).ConfigureAwait(false);
-                    if (isMultipart)
-                    {
-                        nzbDownloadUrl = $"/api/download-nzb/{davItem.Id}";
-                    }
                 }
             }
         }
@@ -311,32 +299,52 @@ public class GetFileDetailsController(
             }
         }
 
-        // Query Rclone instances for cache status and persist to DB
-        response.CacheStatus = await GetRcloneCacheStatusAsync(davItem, response.FileSize).ConfigureAwait(false);
-
-        // Update cache state in database
-        var bestCache = response.CacheStatus
-            .Where(c => c.CachePercentage > 0)
-            .OrderByDescending(c => c.CachePercentage)
-            .FirstOrDefault();
-
-        davItem.LastCacheCheck = DateTimeOffset.UtcNow;
-        if (bestCache != null)
+        // OPTIMIZATION: Skip expensive Rclone cache queries if skip_cache is set
+        // This allows for fast initial load, then the UI can re-fetch with full cache status
+        if (!skipCache)
         {
-            davItem.IsCached = bestCache.IsFullyCached;
-            davItem.CachedBytes = bestCache.CachedBytes;
-            davItem.CachePercentage = bestCache.CachePercentage;
-            davItem.CachedInInstance = bestCache.InstanceName;
+            response.CacheStatus = await GetRcloneCacheStatusAsync(davItem, response.FileSize).ConfigureAwait(false);
+
+            // Update cache state in database
+            var bestCache = response.CacheStatus
+                .Where(c => c.CachePercentage > 0)
+                .OrderByDescending(c => c.CachePercentage)
+                .FirstOrDefault();
+
+            davItem.LastCacheCheck = DateTimeOffset.UtcNow;
+            if (bestCache != null)
+            {
+                davItem.IsCached = bestCache.IsFullyCached;
+                davItem.CachedBytes = bestCache.CachedBytes;
+                davItem.CachePercentage = bestCache.CachePercentage;
+                davItem.CachedInInstance = bestCache.InstanceName;
+            }
+            else
+            {
+                davItem.IsCached = false;
+                davItem.CachedBytes = 0;
+                davItem.CachePercentage = 0;
+                davItem.CachedInInstance = null;
+            }
+
+            await dbClient.Ctx.SaveChangesAsync().ConfigureAwait(false);
         }
         else
         {
-            davItem.IsCached = false;
-            davItem.CachedBytes = 0;
-            davItem.CachePercentage = 0;
-            davItem.CachedInInstance = null;
+            // Return cached values from last check
+            response.CacheStatus = new List<GetFileDetailsResponse.RcloneCacheStatus>();
+            if (!string.IsNullOrEmpty(davItem.CachedInInstance))
+            {
+                response.CacheStatus.Add(new GetFileDetailsResponse.RcloneCacheStatus
+                {
+                    InstanceName = davItem.CachedInInstance,
+                    IsFullyCached = davItem.IsCached ?? false,
+                    CachedBytes = davItem.CachedBytes ?? 0,
+                    CachePercentage = davItem.CachePercentage ?? 0,
+                    Status = (davItem.IsCached ?? false) ? "fully_cached" : "partial_cache"
+                });
+            }
         }
-
-        await dbClient.Ctx.SaveChangesAsync().ConfigureAwait(false);
 
         return Ok(response);
     }
@@ -364,7 +372,8 @@ public class GetFileDetailsController(
             var idsPath = ".ids/" + string.Join("/", idStr.Take(5).Select(c => c.ToString())) + "/" + idStr;
             var contentPath = davItem.Path.TrimStart('/');
 
-            foreach (var instance in instances)
+            // OPTIMIZATION: Query all Rclone instances in parallel
+            var tasks = instances.Select(async instance =>
             {
                 try
                 {
@@ -374,7 +383,7 @@ public class GetFileDetailsController(
                         var cacheResult = CheckVfsCacheDirectory(instance, idsPath, contentPath, expectedSize);
                         if (cacheResult != null)
                         {
-                            cacheStatuses.Add(new GetFileDetailsResponse.RcloneCacheStatus
+                            return new GetFileDetailsResponse.RcloneCacheStatus
                             {
                                 InstanceName = instance.Name,
                                 IsFullyCached = cacheResult.Value.isFullyCached,
@@ -382,8 +391,7 @@ public class GetFileDetailsController(
                                 CachePercentage = cacheResult.Value.percentage,
                                 Status = cacheResult.Value.isFullyCached ? "fully_cached" : "partial_cache",
                                 CachedPath = cacheResult.Value.cachedPath
-                            });
-                            continue; // Found in cache dir, skip API check
+                            };
                         }
                     }
 
@@ -393,25 +401,22 @@ public class GetFileDetailsController(
 
                     if (transfers?.Transfers == null)
                     {
-                        cacheStatuses.Add(new GetFileDetailsResponse.RcloneCacheStatus
+                        return new GetFileDetailsResponse.RcloneCacheStatus
                         {
                             InstanceName = instance.Name,
                             IsFullyCached = false,
                             CachedBytes = 0,
                             CachePercentage = 0,
                             Status = "not_found"
-                        });
-                        continue;
+                        };
                     }
 
                     // Look for the file in transfers - check both content path and .ids path
                     var transfer = transfers.Transfers.FirstOrDefault(t =>
                     {
                         var name = t.Name;
-                        // Check content path (e.g., /content/sonarr/JobName/File.mkv)
                         if (name.Contains(contentPath) || name.EndsWith(davItem.Name))
                             return true;
-                        // Check .ids path (e.g., /.ids/9/6/1/b/0/uuid)
                         if (name.Contains(idsPath) || name.EndsWith(idStr))
                             return true;
                         return false;
@@ -419,41 +424,42 @@ public class GetFileDetailsController(
 
                     if (transfer != null)
                     {
-                        cacheStatuses.Add(new GetFileDetailsResponse.RcloneCacheStatus
+                        return new GetFileDetailsResponse.RcloneCacheStatus
                         {
                             InstanceName = instance.Name,
                             IsFullyCached = transfer.CachePercentage >= 100,
                             CachedBytes = transfer.CacheBytes,
                             CachePercentage = transfer.CachePercentage,
                             Status = transfer.CacheStatus
-                        });
+                        };
                     }
-                    else
+
+                    return new GetFileDetailsResponse.RcloneCacheStatus
                     {
-                        cacheStatuses.Add(new GetFileDetailsResponse.RcloneCacheStatus
-                        {
-                            InstanceName = instance.Name,
-                            IsFullyCached = false,
-                            CachedBytes = 0,
-                            CachePercentage = 0,
-                            Status = "not_in_cache"
-                        });
-                    }
+                        InstanceName = instance.Name,
+                        IsFullyCached = false,
+                        CachedBytes = 0,
+                        CachePercentage = 0,
+                        Status = "not_in_cache"
+                    };
                 }
                 catch (Exception ex)
                 {
                     Serilog.Log.Debug("[GetFileDetails] Failed to query cache status from {Instance}: {Error}",
                         instance.Name, ex.Message);
-                    cacheStatuses.Add(new GetFileDetailsResponse.RcloneCacheStatus
+                    return new GetFileDetailsResponse.RcloneCacheStatus
                     {
                         InstanceName = instance.Name,
                         IsFullyCached = false,
                         CachedBytes = 0,
                         CachePercentage = 0,
                         Status = "error"
-                    });
+                    };
                 }
-            }
+            });
+
+            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+            cacheStatuses.AddRange(results);
         }
         catch (Exception ex)
         {
