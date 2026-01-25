@@ -13,12 +13,33 @@ The upstream repository has 52 new commits in the last week. This document analy
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| ✅ Implemented | 19 | Patches integrated into our fork |
-| ⏳ Pending | 21 | Queued for integration |
+| ✅ Implemented | 26 | Patches integrated into our fork |
+| ⏳ Pending | 14 | Queued for integration |
 | ⚠️ Partial | 2 | Different approach or partial implementation |
 | ❌ Skipped | 10 | Will not integrate (conflicts/not needed) |
 
-### Recent Integration (2026-01-24)
+### Latest Integration (2026-01-24) - BlobStore & Custom NZB Parser
+
+Integrated 7 major infrastructure commits:
+
+| Upstream | Description | Notes |
+|----------|-------------|-------|
+| `8b0fd2e` | BlobStore class for data blobs | New infrastructure |
+| `adabf6d` | BlobCleanupItems table | Database migration |
+| `73251d6` | BlobCleanupService | Background cleanup |
+| `0ae416d` | AddFileController writes to BlobStore | API integration |
+| `0cadac9` | Trigger for BlobCleanupItem on delete | Database trigger |
+| `f617da7` | Read NZB from blob-store | Stream integration |
+| `1b6e719` | Custom NZB parser, removed Usenet pkg | **Major refactor** |
+
+**Custom NZB Parser Implementation Details:**
+- Created `backend/Models/Nzb/` with NzbDocument, NzbFile, NzbSegment, NzbHead, NzbMeta
+- Removed `Usenet` NuGet package dependency
+- Updated 16 files to use new `NzbWebDAV.Models.Nzb` namespace
+- Deleted obsolete `NzbDocumentExtensions.cs` and `NzbFileExtensions.cs`
+- Added backwards-compatible properties (FileName, Size, Number) for minimal code changes
+
+### Previous Integration (2026-01-24)
 
 Integrated 14 additional upstream commits via `upstream-merge` branch:
 
@@ -104,22 +125,29 @@ Integrated 14 additional upstream commits via `upstream-merge` branch:
 | `dab4f2f` | Updated UI for 'Ignored Files' setting | ✅ | `36896fd` | P3 | Cherry-pick | None |
 | `dff0ec0` | Updated UI for 'Categories' setting | ⏳ | - | P3 | Cherry-pick | None |
 
-### 2.3 BlobStore for NZB Storage (P3 - Infrastructure)
+### 2.3 BlobStore for NZB Storage (P3 - Infrastructure) ✅ COMPLETED
 
 | Commit | Description | Status | Fork Commit | Priority | Approach | Conflicts |
 |--------|-------------|--------|-------------|----------|----------|-----------|
-| `8b0fd2e` | Added BlobStore class to manage data blobs | ⏳ | - | P3 | Review | New feature - assess value |
-| `adabf6d` | Added BlobCleanupItems table | ⏳ | - | P3 | Review | Requires migration |
-| `73251d6` | Added BlobCleanupService | ⏳ | - | P3 | Review | New service |
-| `0ae416d` | Updated AddFileController to write nzbs to BlobStore | ⏳ | - | P3 | Review | Depends on BlobStore |
-| `0cadac9` | Added trigger for BlobCleanupItem on QueueItem delete | ⏳ | - | P3 | Review | Depends on BlobStore |
-| `f617da7` | Switched to reading queue nzb stream from blob-store | ⏳ | - | P3 | Review | Depends on BlobStore |
+| `8b0fd2e` | Added BlobStore class to manage data blobs | ✅ | `aa11b38` | P3 | Manual | None |
+| `adabf6d` | Added BlobCleanupItems table | ✅ | `aa11b38` | P3 | Manual | None |
+| `73251d6` | Added BlobCleanupService | ✅ | `606049a` | P3 | Manual | None |
+| `0ae416d` | Updated AddFileController to write nzbs to BlobStore | ✅ | `eb83d87` | P3 | Manual | None |
+| `0cadac9` | Added trigger for BlobCleanupItem on QueueItem delete | ✅ | `4198b4a` | P3 | Manual | None |
+| `f617da7` | Switched to reading queue nzb stream from blob-store | ✅ | `1ef1b0f` | P3 | Manual | None |
 
-### 2.4 Custom NZB Parser (P3)
+### 2.4 Custom NZB Parser (P3) ✅ COMPLETED
 
 | Commit | Description | Status | Fork Commit | Priority | Approach | Conflicts |
 |--------|-------------|--------|-------------|----------|----------|-----------|
-| `1b6e719` | Added custom nzb parser and removed Usenet dependency | ⏳ | - | P3 | Review | **Medium** - Major refactor, 17 files |
+| `1b6e719` | Added custom nzb parser and removed Usenet dependency | ✅ | `upstream-merge` | P3 | Manual | None - resolved |
+
+**Implementation Notes:**
+- Created new `backend/Models/Nzb/` namespace with 5 model classes
+- Async XML parser in NzbDocument.LoadAsync()
+- Added backwards-compat properties: NzbFile.FileName, NzbFile.Size, NzbSegment.Size, NzbSegment.Number
+- Removed Usenet NuGet package (3.1.0)
+- Updated 16 source files to use new namespace
 
 ### 2.5 Mobile Upload Support (P3)
 
@@ -231,10 +259,10 @@ Integrated 14 additional upstream commits via `upstream-merge` branch:
 2. ❌ UI improvements - SKIPPED (entangled with mobile upload)
 3. ⏳ UsenetSharp updates
 
-### Phase 5: Major Refactors (Defer)
-1. ⏳ BlobStore infrastructure (6 commits) - assess value first
-2. ⏳ Custom NZB parser - major change, assess benefit
-3. ❌ Hosted services refactor - conflicts with our services
+### Phase 5: Major Refactors ✅ COMPLETED (2026-01-24)
+1. ✅ BlobStore infrastructure (6 commits) - Integrated via manual implementation
+2. ✅ Custom NZB parser (1 commit) - Replaced Usenet dependency with custom parser
+3. ❌ Hosted services refactor - SKIPPED (conflicts with our services)
 
 ---
 

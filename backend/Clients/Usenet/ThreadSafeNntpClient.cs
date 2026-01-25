@@ -4,8 +4,8 @@ using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Services;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
-using Usenet.Nzb;
 using UsenetSharp.Clients;
 using UsenetSharp.Models;
 using UsenetSharp.Streams;
@@ -208,7 +208,7 @@ public class ThreadSafeNntpClient : INntpClient
     public async Task<long> GetFileSizeAsync(NzbFile file, CancellationToken cancellationToken)
     {
         if (file.Segments.Count == 0) return 0;
-        var header = await GetSegmentYencHeaderAsync(file.Segments[^1].MessageId.Value, cancellationToken)
+        var header = await GetSegmentYencHeaderAsync(file.Segments[^1].MessageId, cancellationToken)
             .ConfigureAwait(false);
         return header.PartOffset + header.PartSize;
     }

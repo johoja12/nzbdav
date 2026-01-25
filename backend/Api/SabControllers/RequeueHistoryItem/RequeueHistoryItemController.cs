@@ -8,9 +8,9 @@ using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Queue;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Websocket;
 using Serilog;
-using Usenet.Nzb;
 
 namespace NzbWebDAV.Api.SabControllers.RequeueHistoryItem;
 
@@ -99,7 +99,7 @@ public class RequeueHistoryItemController(
             FileName = fileName,
             JobName = historyItem.JobName,
             NzbFileSize = documentBytes.Length,
-            TotalSegmentBytes = document.Files.SelectMany(x => x.Segments).Select(x => x.Size).Sum(),
+            TotalSegmentBytes = document.Files.SelectMany(x => x.Segments).Select(x => x.Bytes).Sum(),
             Category = historyItem.Category,
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.Default,

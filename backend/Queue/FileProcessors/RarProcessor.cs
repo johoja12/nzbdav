@@ -6,13 +6,13 @@ using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Streams;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Utils;
 using Serilog;
 using SharpCompress.Common.Rar.Headers;
 using SharpCompress.IO;
 using SharpCompress.Readers;
 using NzbWebDAV.Database.Models;
-using Usenet.Nzb;
 
 namespace NzbWebDAV.Queue.FileProcessors;
 

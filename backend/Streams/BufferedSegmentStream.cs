@@ -22,6 +22,16 @@ public class BufferedSegmentStream : Stream
     // Enable detailed timing for benchmarks
     public static bool EnableDetailedTiming { get; set; } = false;
 
+    /// <summary>
+    /// Number of permanent segment failures before automatically triggering repair.
+    /// </summary>
+    public const int AutoRepairThreshold = 3;
+
+    /// <summary>
+    /// Callback to trigger repair for a file path. Set during application startup.
+    /// </summary>
+    public static Action<string>? OnRepairNeeded { get; set; }
+
     // Global timing accumulators (reset when EnableDetailedTiming is set to true)
     private static long s_totalFetchTimeMs;
     private static long s_totalChannelWriteTimeMs;
@@ -305,6 +315,7 @@ public class BufferedSegmentStream : Stream
     private readonly long[]? _segmentSizes;
     private readonly List<(int Index, string SegmentId)> _corruptedSegments = new();
     private int _lastSuccessfulSegmentSize = 0;
+    private bool _repairTriggered = false; // Ensure repair is only triggered once per stream
 
     // Track which providers have failed for each segment (for straggler retry with different provider)
     private readonly ConcurrentDictionary<int, HashSet<int>> _failedProvidersPerSegment = new();
@@ -1176,25 +1187,46 @@ public class BufferedSegmentStream : Stream
         // Track this segment as corrupted
         _corruptedSegments.Add((index, segmentId));
 
-        // Report corruption back to database if we have a DavItemId
+        // After AutoRepairThreshold (3) permanent failures, automatically trigger repair
+        // This allows the user to continue watching while repair runs in the background
+        if (!_repairTriggered && _corruptedSegments.Count >= AutoRepairThreshold)
+        {
+            _repairTriggered = true;
+            var filePath = _usageContext?.DetailsObject?.Text ?? _usageContext?.Details;
+            if (!string.IsNullOrEmpty(filePath) && OnRepairNeeded != null)
+            {
+                Log.Warning("[BufferedStream] AUTO-REPAIR TRIGGERED: {CorruptedCount} segments failed for Job={Job}. Initiating background repair.",
+                    _corruptedSegments.Count, jobName);
+                try
+                {
+                    OnRepairNeeded(filePath);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "[BufferedStream] Failed to trigger auto-repair for {FilePath}", filePath);
+                }
+            }
+        }
+
+        // Schedule urgent health check - do NOT set IsCorrupted here.
+        // Corruption should only be set by ProviderErrorService when it confirms
+        // that the same segment is missing on ALL providers (HasBlockingMissingArticles = true).
+        // This avoids false positives from timeouts or transient failures.
         if (_usageContext?.DetailsObject?.DavItemId != null)
         {
             var davItemId = _usageContext.Value.DetailsObject.DavItemId.Value;
-            var reason = $"Data missing/corrupt after {maxRetries} retries: {lastException?.Message ?? "Unknown error"}";
             _ = Task.Run(async () => {
                 try {
                     using var db = new DavDatabaseContext();
                     var item = await db.Items.FindAsync(davItemId);
                     if (item != null) {
-                        item.IsCorrupted = true;
-                        item.CorruptionReason = reason;
-                        // Trigger immediate urgent health check (HEAD)
+                        // Only schedule urgent health check, don't mark as corrupted yet
                         item.NextHealthCheck = DateTimeOffset.MinValue;
                         await db.SaveChangesAsync();
-                        Log.Information("[BufferedStream] Marked item {ItemId} as corrupted and scheduled urgent health check due to terminal segment failure.", davItemId);
+                        Log.Information("[BufferedStream] Scheduled urgent health check for item {ItemId} due to segment failure (segment {SegmentId}).", davItemId, segmentId);
                     }
                 } catch (Exception dbEx) {
-                    Log.Error(dbEx, "[BufferedStream] Failed to mark item as corrupted in database.");
+                    Log.Error(dbEx, "[BufferedStream] Failed to schedule health check in database.");
                 }
             });
         }

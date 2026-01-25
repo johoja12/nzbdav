@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NzbWebDAV.Clients.RadarrSonarr;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
@@ -229,16 +230,89 @@ public class ArrMonitoringService
 
     private async Task HandleStuckQueueItem(ArrQueueRecord item, ArrConfig arrConfig, ArrClient client)
     {
-        // since there may be multiple status messages, multiple actions may apply.
-        // in such case, always perform the strongest action.
-        var action = arrConfig.QueueRules
+        // Find all matching rules (status messages that triggered action)
+        var matchingRules = arrConfig.QueueRules
             .Where(x => item.HasStatusMessage(x.Message))
+            .ToList();
+
+        // Since there may be multiple status messages, multiple actions may apply.
+        // In such case, always perform the strongest action.
+        var action = matchingRules
             .Select(x => x.Action)
             .DefaultIfEmpty(ArrConfig.QueueAction.DoNothing)
             .Max();
 
         if (action is ArrConfig.QueueAction.DoNothing) return;
+
+        // Collect the actual status messages from Arr for detailed logging
+        var allStatusMessages = item.StatusMessages
+            .SelectMany(sm => sm.Messages)
+            .ToList();
+
+        // Find which rule messages matched
+        var triggeredReasons = matchingRules
+            .Select(r => r.Message)
+            .ToList();
+
         await client.DeleteQueueRecord(item.Id, action).ConfigureAwait(false);
-        Log.Warning($"Resolved stuck queue item `{item.Title}` from `{client.Host}, with action `{action}`");
+
+        Log.Warning("[ArrMonitoring] Resolved stuck queue item from {Host}: Title='{Title}', Action={Action}, TriggeredBy=[{TriggeredReasons}], StatusMessages=[{StatusMessages}]",
+            client.Host,
+            item.Title,
+            action,
+            string.Join(", ", triggeredReasons),
+            string.Join("; ", allStatusMessages));
+
+        // Save resolution info to HistoryItem for display in file modal
+        await SaveArrResolutionInfoAsync(item.Title, client.Host, action.ToString(), triggeredReasons, allStatusMessages).ConfigureAwait(false);
+    }
+
+    private async Task SaveArrResolutionInfoAsync(string? title, string host, string action, List<string> triggeredReasons, List<string> statusMessages)
+    {
+        if (string.IsNullOrEmpty(title)) return;
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DavDatabaseContext>();
+
+            // Find matching HistoryItem by job name (title from Arr matches our JobName)
+            // The title format from Arr is usually the release name which matches our JobName
+            var historyItem = await db.HistoryItems
+                .FirstOrDefaultAsync(h => h.JobName == title || title.Contains(h.JobName))
+                .ConfigureAwait(false);
+
+            if (historyItem == null)
+            {
+                // Try partial match - Arr title might have extra suffixes like "-xpost"
+                var normalizedTitle = title.Replace("-xpost", "").Replace(".mkv", "").Replace(".avi", "");
+                historyItem = await db.HistoryItems
+                    .FirstOrDefaultAsync(h => normalizedTitle.Contains(h.JobName) || h.JobName.Contains(normalizedTitle))
+                    .ConfigureAwait(false);
+            }
+
+            if (historyItem != null)
+            {
+                var resolutionInfo = new
+                {
+                    action,
+                    triggeredBy = triggeredReasons,
+                    statusMessages,
+                    resolvedAt = DateTime.UtcNow.ToString("o"),
+                    host
+                };
+                historyItem.ArrResolutionInfo = JsonSerializer.Serialize(resolutionInfo);
+                await db.SaveChangesAsync().ConfigureAwait(false);
+                Log.Debug("[ArrMonitoring] Saved resolution info to HistoryItem {JobName}", historyItem.JobName);
+            }
+            else
+            {
+                Log.Debug("[ArrMonitoring] Could not find HistoryItem for title '{Title}' to save resolution info", title);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[ArrMonitoring] Failed to save resolution info for '{Title}'", title);
+        }
     }
 }

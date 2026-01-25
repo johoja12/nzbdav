@@ -403,6 +403,46 @@ export function FileDetailsModal({ show, onHide, fileDetails, loading, onResetSt
                                             )}
                                         </>
                                     )}
+                                    {fileDetails.arrResolution && (
+                                        <tr>
+                                            <td className={styles.labelCell}>Arr Auto-Resolution</td>
+                                            <td className={styles.valueCell}>
+                                                <div className="alert alert-warning py-2 px-3 mb-0 small">
+                                                    <i className="bi bi-lightning-charge-fill me-2"></i>
+                                                    <strong>Queue item was auto-resolved</strong>
+                                                    <div className="mt-1">
+                                                        <strong>Action:</strong> <Badge bg="warning" text="dark">{formatArrAction(fileDetails.arrResolution.action)}</Badge>
+                                                    </div>
+                                                    {fileDetails.arrResolution.triggeredBy.length > 0 && (
+                                                        <div className="mt-1">
+                                                            <strong>Triggered by:</strong>{' '}
+                                                            {fileDetails.arrResolution.triggeredBy.map((trigger, idx) => (
+                                                                <Badge key={idx} bg="secondary" className="me-1">{trigger}</Badge>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {fileDetails.arrResolution.statusMessages.length > 0 && (
+                                                        <div className="mt-1">
+                                                            <strong>Status messages:</strong>
+                                                            <ul className="mb-0 ps-3 mt-1" style={{ listStyleType: 'disc' }}>
+                                                                {fileDetails.arrResolution.statusMessages.map((msg, idx) => (
+                                                                    <li key={idx}>{msg}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                    {fileDetails.arrResolution.arrHost && (
+                                                        <div className="mt-1 text-muted">
+                                                            <small>Resolved by: {fileDetails.arrResolution.arrHost}</small>
+                                                            {fileDetails.arrResolution.resolvedAt && (
+                                                                <small className="ms-2">at {new Date(fileDetails.arrResolution.resolvedAt).toLocaleString()}</small>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </Table>
                         </section>
@@ -670,5 +710,16 @@ function getRepairStatusText(status: number): string {
         case 2: return 'Deleted';
         case 3: return 'Action Needed';
         default: return 'Unknown';
+    }
+}
+
+function formatArrAction(action: string): string {
+    switch (action) {
+        case 'DoNothing': return 'Do Nothing';
+        case 'Remove': return 'Removed from Queue';
+        case 'RemoveAndBlocklist': return 'Removed & Blocklisted';
+        case 'RemoveAndSearch': return 'Removed & Searching';
+        case 'RemoveAndBlocklistAndSearch': return 'Removed, Blocklisted & Searching';
+        default: return action.replace(/([A-Z])/g, ' $1').trim(); // Fallback: split camelCase
     }
 }

@@ -110,32 +110,33 @@ public class DatabaseStoreInstanceRootCollection(
         ? ShardRoutingUtil.ParseShardPrefixes(instance.ShardPrefixes)
         : new HashSet<char>("0123456789abcdef".ToCharArray()); // All prefixes if not sharded
 
-    protected override async Task<IStoreItem?> GetItemAsync(GetItemRequest request)
+    protected override Task<IStoreItem?> GetItemAsync(GetItemRequest request)
     {
         // Map virtual folder names to actual collections
+        // Support both the virtual names (completed, nzb) and actual names (completed-symlinks, nzbs)
         return request.Name.ToLower() switch
         {
-            ".ids" => GetFilteredIdsCollection(),
-            "content" => await GetContentCollection(request.CancellationToken),
-            "completed" => await GetCompletedCollection(request.CancellationToken),
-            "nzb" => await GetNzbCollection(request.CancellationToken),
-            _ => null
+            ".ids" => Task.FromResult<IStoreItem?>(GetFilteredIdsCollection()),
+            "content" => GetContentCollection(request.CancellationToken),
+            "completed" or "completed-symlinks" => GetCompletedCollection(request.CancellationToken),
+            "nzb" or "nzbs" => GetNzbCollection(request.CancellationToken),
+            _ => Task.FromResult<IStoreItem?>(null)
         };
     }
 
     protected override Task<IStoreItem[]> GetAllItemsAsync(CancellationToken cancellationToken)
     {
-        // Always show these virtual directories
+        // Always show these virtual directories with their actual names
+        // so Sonarr/Radarr can find them at the expected paths
         var items = new List<IStoreItem>
         {
             GetFilteredIdsCollection(),
         };
 
-        // Add content/completed/nzb as virtual folder stubs
-        // These will resolve to actual collections when accessed
-        items.Add(new VirtualFolderStub("content", "instance-content:" + instance.Id));
-        items.Add(new VirtualFolderStub("completed", "instance-completed:" + instance.Id));
-        items.Add(new VirtualFolderStub("nzb", "instance-nzb:" + instance.Id));
+        // Use actual folder names that match what Sonarr/Radarr expect
+        items.Add(new VirtualFolderStub(DavItem.ContentFolder.Name, "instance-content:" + instance.Id));
+        items.Add(new VirtualFolderStub(DavItem.SymlinkFolder.Name, "instance-completed:" + instance.Id));
+        items.Add(new VirtualFolderStub(DavItem.NzbFolder.Name, "instance-nzb:" + instance.Id));
 
         return Task.FromResult(items.ToArray());
     }
@@ -172,27 +173,21 @@ public class DatabaseStoreInstanceRootCollection(
         );
     }
 
-    private async Task<IStoreItem?> GetCompletedCollection(CancellationToken ct)
+    private Task<IStoreItem?> GetCompletedCollection(CancellationToken ct)
     {
-        // Return the completed symlink folder
-        var completedFolder = await dbClient.GetDirectoryChildAsync(DavItem.Root.Id, "completed", ct).ConfigureAwait(false);
-        if (completedFolder == null) return null;
-
-        return new DatabaseStoreSymlinkCollection(
-            completedFolder,
+        // Return the completed symlink folder (DavItem.SymlinkFolder)
+        return Task.FromResult<IStoreItem?>(new DatabaseStoreSymlinkCollection(
+            DavItem.SymlinkFolder,
             dbClient,
             configManager
-        );
+        ));
     }
 
-    private async Task<IStoreItem?> GetNzbCollection(CancellationToken ct)
+    private Task<IStoreItem?> GetNzbCollection(CancellationToken ct)
     {
-        // Return the nzb watch folder
-        var nzbFolder = await dbClient.GetDirectoryChildAsync(DavItem.Root.Id, "nzb", ct).ConfigureAwait(false);
-        if (nzbFolder == null) return null;
-
-        return new DatabaseStoreWatchFolder(
-            nzbFolder,
+        // Return the nzb watch folder (DavItem.NzbFolder)
+        return Task.FromResult<IStoreItem?>(new DatabaseStoreWatchFolder(
+            DavItem.NzbFolder,
             httpContext,
             dbClient,
             configManager,
@@ -200,7 +195,7 @@ public class DatabaseStoreInstanceRootCollection(
             queueManager,
             websocketManager,
             nzbAnalysisService
-        );
+        ));
     }
 
     protected override bool SupportsFastMove(SupportsFastMoveRequest request)

@@ -13,6 +13,7 @@ using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Models;
 using NzbWebDAV.Services;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Websocket;
 using Serilog;
@@ -171,7 +172,7 @@ public class MagicTester
             Console.WriteLine($"Inspecting NZB: {path}");
             
             using var fileStream = File.OpenRead(path);
-            var nzb = await Usenet.Nzb.NzbDocument.LoadAsync(fileStream);
+            var nzb = await NzbDocument.LoadAsync(fileStream);
             
             Console.WriteLine($"NZB Loaded. Files: {nzb.Files.Count}");
             foreach (var f in nzb.Files)

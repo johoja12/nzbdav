@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
-using Usenet.Nzb;
 using UsenetSharp.Models;
 
 namespace NzbWebDAV.Clients.Usenet;
@@ -39,7 +39,7 @@ public class CachingNntpClient(INntpClient client, MemoryCache cache) : Wrapping
     public override async Task<long> GetFileSizeAsync(NzbFile file, CancellationToken ct)
     {
         if (file.Segments.Count == 0) return 0;
-        var header = await GetSegmentYencHeaderAsync(file.Segments[^1].MessageId.Value, ct).ConfigureAwait(false);
+        var header = await GetSegmentYencHeaderAsync(file.Segments[^1].MessageId, ct).ConfigureAwait(false);
         return header.PartOffset + header.PartSize;
     }
 }

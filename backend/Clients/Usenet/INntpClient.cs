@@ -1,8 +1,7 @@
 ﻿using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Streams;
 using UsenetSharp.Models;
-using Usenet.Nzb;
-using Usenet.Yenc;
 
 namespace NzbWebDAV.Clients.Usenet;
 

@@ -19,6 +19,7 @@ using NzbWebDAV.Tools;
 using NzbWebDAV.WebDav;
 using NzbWebDAV.WebDav.Base;
 using NzbWebDAV.Websocket;
+using NzbWebDAV.Streams;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -254,8 +255,16 @@ class Program
         // force instantiation of services
         var app = builder.Build();
         app.Services.GetRequiredService<ArrMonitoringService>();
-        app.Services.GetRequiredService<HealthCheckService>();
+        var healthCheckService = app.Services.GetRequiredService<HealthCheckService>();
         app.Services.GetRequiredService<BandwidthService>();
+
+        // Register auto-repair callback for BufferedSegmentStream
+        // When streaming encounters 3+ permanent failures, automatically trigger repair
+        BufferedSegmentStream.OnRepairNeeded = filePath =>
+        {
+            Log.Information("[Program] Auto-repair requested for: {FilePath}", filePath);
+            healthCheckService.TriggerManualRepairInBackground(filePath);
+        };
 
         // Backfill JobNames for missing article events (Background, delayed)
         _ = Task.Run(async () =>

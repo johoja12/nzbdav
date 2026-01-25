@@ -21,6 +21,12 @@ public class HistoryItem
     public bool IsArchived { get; set; }
     public DateTime? ArchivedAt { get; set; }
 
+    /// <summary>
+    /// JSON containing Arr queue resolution details when item was auto-resolved as "stuck".
+    /// Format: { "action": "RemoveAndBlocklistAndSearch", "triggeredBy": ["sample file"], "statusMessages": [...], "resolvedAt": "...", "host": "sonarr.example.org" }
+    /// </summary>
+    public string? ArrResolutionInfo { get; set; }
+
     public enum DownloadStatusOption
     {
         Completed = 1,

@@ -18,9 +18,9 @@ using NzbWebDAV.Queue.FileProcessors;
 using NzbWebDAV.Queue.PostProcessors;
 using NzbWebDAV.Services;
 using NzbWebDAV.Utils;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Websocket;
 using Serilog;
-using Usenet.Nzb;
 
 namespace NzbWebDAV.Queue;
 
@@ -33,6 +33,7 @@ public class QueueItemProcessor(
     WebsocketManager websocketManager,
     HealthCheckService healthCheckService,
     RcloneRcService rcloneRcService,
+    NzbAnalysisService nzbAnalysisService,
     IProgress<int> progress,
     CancellationToken ct
 )
@@ -182,7 +183,7 @@ public class QueueItemProcessor(
         // Check filename for password first (e.g., "Movie.Name{{password}}.nzb" or "Movie.Name password=secret.nzb")
         // Fall back to NZB metadata if not found in filename
         var archivePassword = FilenameUtil.GetNzbPassword(queueItem.FileName)
-            ?? nzb.MetaData.GetValueOrDefault("password")?.FirstOrDefault();
+            ?? nzb.Metadata.GetValueOrDefault("password");
         var nzbFiles = nzb.Files.Where(x => x.Segments.Count > 0).ToList();
         var parseElapsed = DateTime.UtcNow - parseStartTime;
         Log.Information("[QueueItemProcessor] Successfully parsed NZB for {JobName}. Files: {FileCount}, Total segments: {SegmentCount}, Elapsed: {ElapsedMs}ms",
@@ -196,7 +197,7 @@ public class QueueItemProcessor(
         // step 0 -- perform article existence pre-check against cache
         // https://github.com/nzbdav-dev/nzbdav/issues/101
         Log.Debug("[QueueItemProcessor] Step 0: Pre-checking article existence against cache for {JobName}...", queueItem.JobName);
-        var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId.Value);
+        var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId);
         healthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
         Log.Debug("[QueueItemProcessor] Step 0 complete: Pre-checked {ArticleCount} articles for {JobName}", articlesToPrecheck.Count(), queueItem.JobName);
 
@@ -614,6 +615,38 @@ public class QueueItemProcessor(
         _ = websocketManager.SendMessage(WebsocketTopic.QueueItemRemoved, queueItem.Id.ToString());
         _ = websocketManager.SendMessage(WebsocketTopic.HistoryItemAdded, historySlot.ToJson());
         _ = RefreshMonitoredDownloads();
+
+        // Trigger analysis for video files after successful import
+        if (historyItem.DownloadStatus == HistoryItem.DownloadStatusOption.Completed && mountFolder != null)
+        {
+            try
+            {
+                // Get all video files in the mount folder
+                var videoExtensions = new[] { ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts" };
+                var videoFiles = await dbClient.Ctx.Items
+                    .AsNoTracking()
+                    .Where(x => x.ParentId == mountFolder.Id)
+                    .Where(x => x.Type == DavItem.ItemType.NzbFile ||
+                               x.Type == DavItem.ItemType.RarFile ||
+                               x.Type == DavItem.ItemType.MultipartFile)
+                    .ToListAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                foreach (var file in videoFiles)
+                {
+                    var ext = Path.GetExtension(file.Name)?.ToLowerInvariant();
+                    if (ext != null && videoExtensions.Contains(ext))
+                    {
+                        Log.Information("[QueueItemProcessor] Triggering analysis for {FileName} ({Id})", file.Name, file.Id);
+                        nzbAnalysisService.TriggerAnalysisInBackground(file.Id, null);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[QueueItemProcessor] Failed to trigger analysis for completed import");
+            }
+        }
 
         // All history items (including failed) are now retained for 1 hour via ArrMonitoringService cleanup
     }

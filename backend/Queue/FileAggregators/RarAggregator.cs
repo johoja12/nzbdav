@@ -18,7 +18,7 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
         var fileSegments = processorResults
             .OfType<RarProcessor.Result>()
             .SelectMany(x => x.StoredFileSegments)
-            .OrderBy(x => x.PartNumber)
+            .OrderBy(x => x.PartNumber.PartNumberFromHeader ?? x.PartNumber.PartNumberFromFilename ?? -1)
             .ToList();
 
         ProcessArchive(fileSegments);

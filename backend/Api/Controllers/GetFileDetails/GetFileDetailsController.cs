@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Api.Controllers.GetWebdavItem;
@@ -122,24 +123,27 @@ public class GetFileDetailsController(
             .ToDictionary(x => x.Index, x => x.Host);
 
         // Get missing article count from summaries (events aren't stored to save space)
-        // Only show count for BLOCKING missing articles (missing across ALL providers)
-        // Non-blocking errors (missing on some providers but available on others) are not critical
-        var missingArticleSummary = await dbClient.Ctx.MissingArticleSummaries
+        // There could be multiple summaries for the same DavItemId (different filenames/paths)
+        var missingArticleSummaries = await dbClient.Ctx.MissingArticleSummaries
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.DavItemId == itemGuid)
+            .Where(x => x.DavItemId == itemGuid)
+            .ToListAsync()
             .ConfigureAwait(false);
 
-        // Only count as missing if blocking (missing across all providers)
-        // TotalEvents is divided by provider count to estimate unique blocking segments
+        // Only show count when HasBlockingMissingArticles is true
+        // This means the same segment was confirmed missing on ALL providers
+        // (ProviderErrorService sets both HasBlockingMissingArticles and IsCorrupted together)
         var missingArticleCount = 0;
-        if (missingArticleSummary?.HasBlockingMissingArticles == true)
+        var hasBlocking = missingArticleSummaries.Any(s => s.HasBlockingMissingArticles);
+
+        if (hasBlocking)
         {
+            var totalEvents = missingArticleSummaries.Where(s => s.HasBlockingMissingArticles).Sum(s => s.TotalEvents);
             var providerCount = usenetConfig.Providers.Count;
-            // Estimate unique blocking segments: TotalEvents / providerCount (since each blocking segment
-            // generates one error per provider)
+            // Estimate unique blocking segments: TotalEvents / providerCount (each blocking segment generates one error per provider)
             missingArticleCount = providerCount > 0
-                ? (int)Math.Ceiling((double)missingArticleSummary.TotalEvents / providerCount)
-                : missingArticleSummary.TotalEvents;
+                ? (int)Math.Ceiling((double)totalEvents / providerCount)
+                : totalEvents;
         }
 
         // Get latest health check result
@@ -165,8 +169,15 @@ public class GetFileDetailsController(
 
         // Check if NZB download is available
         string? nzbDownloadUrl = null;
+        HistoryItem? historyItem = null;
 
         var queueItem = await dbClient.Ctx.QueueItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.JobName == queueJobName)
+            .ConfigureAwait(false);
+
+        // Always try to fetch HistoryItem for ArrResolutionInfo (even if in queue)
+        historyItem = await dbClient.Ctx.HistoryItems
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.JobName == queueJobName)
             .ConfigureAwait(false);
@@ -178,21 +189,12 @@ public class GetFileDetailsController(
                 .AsNoTracking()
                 .AnyAsync(x => x.Id == queueItem.Id)
                 .ConfigureAwait(false);
-            
+
             if (nzbExists) nzbDownloadUrl = $"/api/download-nzb/{davItem.Id}";
         }
-        else
+        else if (historyItem != null && !string.IsNullOrEmpty(historyItem.NzbContents))
         {
-            // If not in queue, check HistoryItem.NzbContents
-            var historyItem = await dbClient.Ctx.HistoryItems
-                .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.JobName == queueJobName)
-                .ConfigureAwait(false);
-
-            if (historyItem != null && !string.IsNullOrEmpty(historyItem.NzbContents))
-            {
-                nzbDownloadUrl = $"/api/download-nzb/{davItem.Id}";
-            }
+            nzbDownloadUrl = $"/api/download-nzb/{davItem.Id}";
         }
 
         // Fallback: If NZB not in Queue/History, check if we have any file metadata (Nzb, Rar, or Multipart) to generate from
@@ -264,6 +266,35 @@ public class GetFileDetailsController(
                 CreatedAt = latestHealthCheck.CreatedAt
             } : null
         };
+
+        // Parse Arr resolution info if available (when queue item was auto-resolved as "stuck")
+        if (historyItem != null && !string.IsNullOrEmpty(historyItem.ArrResolutionInfo))
+        {
+            try
+            {
+                var resolutionJson = JsonDocument.Parse(historyItem.ArrResolutionInfo);
+                var root = resolutionJson.RootElement;
+
+                response.ArrResolution = new GetFileDetailsResponse.ArrResolutionDetails
+                {
+                    Action = root.TryGetProperty("action", out var actionProp) ? actionProp.GetString() ?? "" : "",
+                    TriggeredBy = root.TryGetProperty("triggeredBy", out var triggeredProp) && triggeredProp.ValueKind == JsonValueKind.Array
+                        ? triggeredProp.EnumerateArray().Select(e => e.GetString() ?? "").ToList()
+                        : new List<string>(),
+                    StatusMessages = root.TryGetProperty("statusMessages", out var statusProp) && statusProp.ValueKind == JsonValueKind.Array
+                        ? statusProp.EnumerateArray().Select(e => e.GetString() ?? "").ToList()
+                        : new List<string>(),
+                    ResolvedAt = root.TryGetProperty("resolvedAt", out var resolvedProp) && DateTimeOffset.TryParse(resolvedProp.GetString(), out var resolvedAt)
+                        ? resolvedAt
+                        : null,
+                    ArrHost = root.TryGetProperty("host", out var hostProp) ? hostProp.GetString() : null
+                };
+            }
+            catch (JsonException ex)
+            {
+                Serilog.Log.Warning("[GetFileDetails] Failed to parse ArrResolutionInfo for {JobName}: {Error}", queueJobName, ex.Message);
+            }
+        }
 
         // Get segment statistics if available
         if (nzbFile != null)

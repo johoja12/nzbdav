@@ -31,6 +31,12 @@ public class GetFileDetailsResponse
     public HealthCheckInfo? LatestHealthCheckResult { get; set; }
     public List<RcloneCacheStatus> CacheStatus { get; set; } = new();
 
+    /// <summary>
+    /// Resolution info when the file's queue item was auto-resolved as "stuck" by ArrMonitoringService.
+    /// Contains action taken, triggered rules, and Arr status messages.
+    /// </summary>
+    public ArrResolutionDetails? ArrResolution { get; set; }
+
     public class RcloneCacheStatus
     {
         public string InstanceName { get; set; } = null!;
@@ -62,5 +68,23 @@ public class GetFileDetailsResponse
         public HealthCheckResult.RepairAction RepairStatus { get; set; }
         public string? Message { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
+    }
+
+    public class ArrResolutionDetails
+    {
+        /// <summary>Action taken to resolve the stuck queue item (e.g., "RemoveAndBlocklistAndSearch")</summary>
+        public string Action { get; set; } = null!;
+
+        /// <summary>Rule messages that triggered this resolution (e.g., "sample file", "password protected")</summary>
+        public List<string> TriggeredBy { get; set; } = new();
+
+        /// <summary>Actual status messages from Arr (the full error details)</summary>
+        public List<string> StatusMessages { get; set; } = new();
+
+        /// <summary>When the resolution occurred</summary>
+        public DateTimeOffset? ResolvedAt { get; set; }
+
+        /// <summary>Arr instance host that reported the stuck item</summary>
+        public string? ArrHost { get; set; }
     }
 }

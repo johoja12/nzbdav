@@ -122,6 +122,15 @@ export type FileDetails = {
     providerStats: ProviderStatistic[];
     latestHealthCheckResult: HealthCheckInfoType | null;
     cacheStatus: RcloneCacheStatus[];
+    arrResolution?: ArrResolutionDetails | null;
+}
+
+export type ArrResolutionDetails = {
+    action: string;
+    triggeredBy: string[];
+    statusMessages: string[];
+    resolvedAt?: string | null;
+    arrHost?: string | null;
 }
 
 export type RcloneCacheStatus = {

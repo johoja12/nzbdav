@@ -22,8 +22,8 @@ using NzbWebDAV.Utils;
 using NzbWebDAV.Models;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
+using NzbWebDAV.Models.Nzb;
 using Serilog;
-using Usenet.Nzb;
 
 namespace NzbWebDAV.Tools;
 

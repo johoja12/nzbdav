@@ -10,9 +10,9 @@ using NzbWebDAV.Models;
 using NzbWebDAV.Services;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Websocket;
+using NzbWebDAV.Models.Nzb;
 using Serilog;
 using UsenetSharp.Models;
-using Usenet.Nzb;
 
 namespace NzbWebDAV.Clients.Usenet;
 

@@ -7,7 +7,7 @@ using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Extensions;
 using NzbWebDAV.Logging;
-using Usenet.Nzb;
+using NzbWebDAV.Models.Nzb;
 using UsenetSharp.Models;
 using Serilog;
 using NzbWebDAV.Utils;
@@ -148,7 +148,7 @@ public static class FetchFirstSegmentsStep
             using var _ = timeoutCts.Token.SetScopedContext(context);
 
             // get the first article stream
-            var firstSegment = nzbFile.Segments[0].MessageId.Value;
+            var firstSegment = nzbFile.Segments[0].MessageId;
             logger.Debug("Getting stream for {FileName} (segment: {SegmentId})",
                 nzbFile.FileName, firstSegment);
 

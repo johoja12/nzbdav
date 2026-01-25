@@ -179,11 +179,11 @@ public class ProviderErrorService : IDisposable
                     if (!summary.HasBlockingMissingArticles)
                     {
                          // Optimization: Check for blocking within the current batch only.
-                         // Since we are not persisting granular events anymore to save space, 
+                         // Since we are not persisting granular events anymore to save space,
                          // we cannot query the DB for historical provider failures per segment.
-                         // We will mark as blocking only if we see failures from ALL providers for a single segment *within this batch* 
+                         // We will mark as blocking only if we see failures from ALL providers for a single segment *within this batch*
                          // or if the summary already says so.
-                         
+
                          var segmentsInBatch = group.GroupBy(x => x.SegmentId);
                          foreach (var segGroup in segmentsInBatch)
                          {
@@ -191,7 +191,23 @@ public class ProviderErrorService : IDisposable
                              if (distinctProvidersInBatch >= totalProviders)
                              {
                                  summary.HasBlockingMissingArticles = true;
-                                 Log.Information($"[MissingArticles] File '{normalizedFilename}' (DavItemId: {summary.DavItemId}) is now blocking (missing across all providers in current batch).");
+                                 var blockingSegmentId = segGroup.Key;
+                                 Log.Information("[MissingArticles] File '{Filename}' (DavItemId: {DavItemId}) is now blocking - segment '{SegmentId}' missing across all {ProviderCount} providers.",
+                                     normalizedFilename, summary.DavItemId, blockingSegmentId, totalProviders);
+
+                                 // Mark the DavItem as corrupted - this is the ONLY place corruption should be set
+                                 // because we have confirmed the same segment is missing on ALL providers
+                                 if (summary.DavItemId != Guid.Empty)
+                                 {
+                                     var itemToMarkCorrupted = await dbContext.Items.FindAsync(summary.DavItemId);
+                                     if (itemToMarkCorrupted != null && !itemToMarkCorrupted.IsCorrupted)
+                                     {
+                                         itemToMarkCorrupted.IsCorrupted = true;
+                                         itemToMarkCorrupted.CorruptionReason = $"Article with message-id {blockingSegmentId} not found on any provider.";
+                                         Log.Warning("[MissingArticles] Marked DavItem {DavItemId} as corrupted: segment '{SegmentId}' missing on all providers.",
+                                             summary.DavItemId, blockingSegmentId);
+                                     }
+                                 }
                                  break;
                              }
                          }

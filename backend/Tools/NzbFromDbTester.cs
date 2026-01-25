@@ -21,9 +21,9 @@ using NzbWebDAV.Queue.DeobfuscationSteps._1.FetchFirstSegment;
 using NzbWebDAV.Queue.DeobfuscationSteps._2.GetPar2FileDescriptors;
 using NzbWebDAV.Queue.DeobfuscationSteps._3.GetFileInfos;
 using NzbWebDAV.Queue.FileProcessors;
+using NzbWebDAV.Models.Nzb;
 using NzbWebDAV.Utils;
 using Serilog;
-using Usenet.Nzb;
 
 namespace NzbWebDAV.Tools;
 
@@ -396,7 +396,7 @@ public class NzbFromDbTester
         try
         {
             await using var fileStream = File.OpenRead(filePath);
-            var nzbDoc = NzbDocument.Load(fileStream);
+            var nzbDoc = await NzbDocument.LoadAsync(fileStream).ConfigureAwait(false);
 
             if (nzbDoc.Files.Count == 0)
             {
@@ -408,10 +408,10 @@ public class NzbFromDbTester
             var largestFile = nzbDoc.Files.OrderByDescending(f => f.Size).First();
             var fileName = largestFile.FileName;
 
-            // Extract segment IDs (convert NntpMessageId to string)
+            // Extract segment IDs
             var segmentIds = largestFile.Segments
                 .OrderBy(s => s.Number)
-                .Select(s => s.MessageId.Value)
+                .Select(s => s.MessageId)
                 .ToArray();
 
             var fileSize = largestFile.Size;
@@ -810,7 +810,7 @@ public class NzbFromDbTester
                     return;
                 }
                 await using var fileStream = File.OpenRead(nzbFilePath);
-                var nzbDoc = NzbDocument.Load(fileStream);
+                var nzbDoc = await NzbDocument.LoadAsync(fileStream).ConfigureAwait(false);
                 nzbFiles = nzbDoc.Files.Where(x => x.Segments.Count > 0).ToList();
                 nzbName = Path.GetFileName(nzbFilePath);
             }

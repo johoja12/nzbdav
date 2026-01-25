@@ -21,6 +21,7 @@ public class QueueManager : IDisposable
     private readonly WebsocketManager _websocketManager;
     private readonly HealthCheckService _healthCheckService;
     private readonly RcloneRcService _rcloneRcService;
+    private readonly NzbAnalysisService _nzbAnalysisService;
     private readonly IServiceScopeFactory _scopeFactory;
 
     private CancellationTokenSource _sleepingQueueToken = new();
@@ -32,6 +33,7 @@ public class QueueManager : IDisposable
         WebsocketManager websocketManager,
         HealthCheckService healthCheckService,
         RcloneRcService rcloneRcService,
+        NzbAnalysisService nzbAnalysisService,
         IServiceScopeFactory scopeFactory
     )
     {
@@ -40,6 +42,7 @@ public class QueueManager : IDisposable
         _websocketManager = websocketManager;
         _healthCheckService = healthCheckService;
         _rcloneRcService = rcloneRcService;
+        _nzbAnalysisService = nzbAnalysisService;
         _scopeFactory = scopeFactory;
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
@@ -213,7 +216,7 @@ public class QueueManager : IDisposable
         var task = new QueueItemProcessor(
             queueItem, queueNzbStream, scopeFactory, _usenetClient,
             _configManager, _websocketManager, _healthCheckService, _rcloneRcService,
-            progressHook, cts.Token
+            _nzbAnalysisService, progressHook, cts.Token
         ).ProcessAsync();
         var inProgressQueueItem = new InProgressQueueItem()
         {
